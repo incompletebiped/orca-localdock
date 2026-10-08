@@ -1,0 +1,28 @@
+{
+  "name": "localdock",
+  "private": true,
+  "description": "LocalDock for Orca (work in progress): pull WordPress sites from cPanel over Orca SSH, run them with DDEV, sync changes back like Source Control.",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b packages/core && node packages/orca-plugin/scripts/build.mjs",
+    "preview": "tsc -b packages/core && node packages/orca-plugin/scripts/build.mjs --preview",
+    "typecheck": "tsc -b packages/core && tsc -p packages/orca-plugin",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.25.12",
+    "eslint": "^9.39.5",
+    "typescript": "~5.8",
+    "typescript-eslint": "^8.71.1",
+    "vitest": "^3.2.7"
+  }
+}

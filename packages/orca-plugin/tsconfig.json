@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "build-tsc",
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "noEmit": true,
+    "composite": false,
+    "declaration": false
+  },
+  "include": ["src"],
+  "references": [{ "path": "../core" }]
+}

@@ -1,0 +1,27 @@
+name: Bug report
+description: Something isn't working
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Don't include real hostnames, IPs, account names, domains or credentials.** Use example.com / 203.0.113.10.
+        Security issues: report privately (see SECURITY.md), not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+  - type: input
+    id: version
+    attributes:
+      label: LocalDock version / commit
+  - type: input
+    id: env
+    attributes:
+      label: OS, Docker version, cPanel version (if known)

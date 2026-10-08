@@ -1,0 +1,27 @@
+{
+  "name": "@localdock/core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "LocalDock engine: SSH/SFTP, cPanel discovery, file and database sync, Docker environments.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "ssh2": "^1.17.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/ssh2": "^1.15.6"
+  },
+  "sideEffects": false
+}

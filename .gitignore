@@ -1,0 +1,21 @@
+node_modules/
+dist/
+# Built plugin and panel preview (npm run build / npm run preview)
+packages/orca-plugin/preview/
+coverage/
+*.log
+*.tsbuildinfo
+.env
+.env.*
+# LocalDock per-site data (database dumps contain personal data)
+.localdock/
+*.sql
+*.sql.gz
+# Local config/secrets must never be committed
+localdock.config.json
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+.DS_Store
+Thumbs.db

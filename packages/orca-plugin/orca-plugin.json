@@ -1,0 +1,30 @@
+{
+  "manifestVersion": 1,
+  "id": "localdock",
+  "publisher": "incompletebiped",
+  "name": "LocalDock",
+  "version": "0.0.1",
+  "description": "Work-in-progress: pull WordPress sites from cPanel servers over Orca SSH, run them locally with DDEV, and sync changes back like Source Control.",
+  "engines": { "orca": ">=1.4.222" },
+  "pluginApi": 1,
+  "main": "worker.mjs",
+  "contributes": {
+    "panels": [{ "id": "sites", "title": "LocalDock", "icon": "container", "entry": "panel/index.html" }],
+    "commands": [
+      { "id": "localdock.state", "title": "LocalDock: Get panel state (used by the panel)" },
+      { "id": "localdock.dispatch", "title": "LocalDock: Run a panel action (used by the panel)" },
+      { "id": "localdock.refresh", "title": "LocalDock: Refresh", "context": "worktree" },
+      { "id": "localdock.scan-changes", "title": "LocalDock: Check for changes", "context": "worktree" },
+      { "id": "localdock.start", "title": "LocalDock: Start local site (DDEV)", "context": "worktree" },
+      { "id": "localdock.stop", "title": "LocalDock: Stop local site (DDEV)", "context": "worktree" }
+    ],
+    "events": [{ "on": "worktree.created" }]
+  },
+  "capabilities": [
+    { "kind": "workspace:read" },
+    { "kind": "notifications:show" },
+    { "kind": "storage" },
+    { "kind": "secrets" },
+    { "kind": "events:subscribe" }
+  ]
+}
