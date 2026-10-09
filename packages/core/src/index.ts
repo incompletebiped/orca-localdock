@@ -34,3 +34,4 @@ export * from './ddev/Ddev.js';
 export * from './operations/context.js';
 export * from './operations/fileSync.js';
 export * from './operations/site.js';
+export * from './operations/reset.js';

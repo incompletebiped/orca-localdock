@@ -15,6 +15,7 @@ const sites = [
 export const FIXTURES: Record<string, PanelState> = {
   'Waiting on Orca': { ...base, view: 'awaiting-orca', gaps: [GAPS['panel-bridge'], GAPS['project-path'], GAPS['ssh-hosts'], GAPS['ssh-session']] },
   'No project': { ...base, view: 'no-project' },
+  'Project not empty': { ...base, view: 'project-not-empty', projectName: 'my-app' },
   'No SSH hosts': { ...base, view: 'no-hosts' },
   'Choose a server': {
     ...base,

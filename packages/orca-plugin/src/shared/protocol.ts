@@ -86,6 +86,8 @@ export type PanelView =
   /** An Orca capability LocalDock needs isn't available yet. */
   | { view: 'awaiting-orca'; gaps: GapInfo[]; blockedAction?: string }
   | { view: 'no-project' }
+  /** The open project already has files, so it can't take a pulled site. */
+  | { view: 'project-not-empty'; projectName: string }
   /** No SSH hosts in Orca yet. */
   | { view: 'no-hosts' }
   | { view: 'choose-host'; hosts: HostSummary[] }

@@ -15,7 +15,8 @@
     "preview": "tsc -b packages/core && node packages/orca-plugin/scripts/build.mjs --preview",
     "typecheck": "tsc -b packages/core && tsc -p packages/orca-plugin",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "reset-project": "tsc -b packages/core && node packages/core/scripts/reset-project.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

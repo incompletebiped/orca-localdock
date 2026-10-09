@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -61,6 +61,7 @@ class FakeHost implements OrcaHost {
   project: ProjectInfo | null = null;
   hosts: SshHostInfo[] = [];
   sessionGap = false;
+  session?: RemoteSession;
   opened: string[] = [];
   notes: string[] = [];
   store = new Map<string, unknown>();
@@ -76,7 +77,7 @@ class FakeHost implements OrcaHost {
   }
   async openSession(): Promise<RemoteSession> {
     if (this.sessionGap) throw new OrcaApiPendingError('ssh-session');
-    return fakeServerSession();
+    return this.session ?? fakeServerSession();
   }
   async openUrl(url: string) {
     this.opened.push(url);
@@ -110,6 +111,64 @@ describe('LocalDockController', () => {
 
   it('asks for a project when none is open', async () => {
     expect((await ctl.dispatch({ type: 'refresh' })).view).toBe('no-project');
+  });
+
+  it('offers no servers in a project that already has files', async () => {
+    host.project = { path: dir, name: 'main' };
+    host.hosts = [{ id: 'h1', label: 'Example server', host: 'server.example.com', port: 22, username: 'root', connected: true }];
+    await fs.mkdir(path.join(dir, '.git'));
+    expect((await ctl.dispatch({ type: 'refresh' })).view).toBe('choose-host');
+
+    await fs.writeFile(path.join(dir, 'package.json'), '{}');
+    expect(await ctl.dispatch({ type: 'refresh' })).toMatchObject({ view: 'project-not-empty', projectName: path.basename(dir) });
+    expect((await ctl.dispatch({ type: 'back-to-hosts' })).view).toBe('project-not-empty');
+    expect((await ctl.dispatch({ type: 'scan-sites', hostId: 'h1' })).view).toBe('project-not-empty');
+  });
+
+  it('keeps a running pull with its own project when the user switches away and back', async () => {
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-other-'));
+    await fs.writeFile(path.join(other, 'index.php'), '');
+    host.project = { path: dir, name: 'main' };
+    host.hosts = [{ id: 'h1', label: 'x', host: 'server.example.com', port: 22, username: 'root', connected: true }];
+    await ctl.dispatch({ type: 'scan-sites', hostId: 'h1' });
+
+    // Hold the pull at its first server read (wp-config.php) until released.
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const base = fakeServerSession();
+    const readFile = base.sftp.readFile.bind(base.sftp);
+    host.session = {
+      ...base,
+      sftp: Object.assign(Object.create(base.sftp), {
+        readFile: async (p: string) => {
+          if (p.endsWith('wp-config.php')) {
+            await held;
+            throw new Error('No such file');
+          }
+          return readFile(p);
+        },
+      }),
+    };
+    (ctl as unknown as { sessions: Map<string, unknown> }).sessions.clear();
+    const pulling = ctl.dispatch({ type: 'pull-site', hostId: 'h1', account: 'exampleco', domain: 'example.com' });
+    await vi.waitFor(() => expect(ctl.state().job?.title).toBe('Pulling example.com'));
+
+    // A refresh in the same project (the focus poll) keeps the job and the pulling view.
+    expect(await ctl.dispatch({ type: 'refresh' })).toMatchObject({ view: 'pulling', job: { title: 'Pulling example.com' } });
+
+    // In another project the job is hidden behind a notice.
+    host.project = { path: other, name: 'main' };
+    const away = await ctl.dispatch({ type: 'refresh' });
+    expect(away).toMatchObject({ view: 'project-not-empty', job: null, notice: { kind: 'info' } });
+    expect(away.notice?.text).toContain(path.basename(dir));
+
+    // Back in the pull's project: the pulling view and job return, though .localdock now exists.
+    host.project = { path: dir, name: 'main' };
+    expect(await ctl.dispatch({ type: 'refresh' })).toMatchObject({ view: 'pulling', job: { title: 'Pulling example.com' } });
+
+    release();
+    await pulling;
+    expect(ctl.state().job).toBeNull();
   });
 
   it('asks for an SSH host when Orca has none', async () => {

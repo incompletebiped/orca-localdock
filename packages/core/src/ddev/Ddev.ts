@@ -107,6 +107,11 @@ export class Ddev {
     await this.must(projectDir, ['stop'], 'ddev stop');
   }
 
+  /** Remove the project's containers and database (no snapshot). Files are left alone. */
+  async delete(projectDir: string): Promise<void> {
+    await this.must(projectDir, ['delete', '--omit-snapshot', '--yes'], 'ddev delete');
+  }
+
   async describe(projectDir: string): Promise<DdevDescription> {
     const r = await this.ddev(projectDir, ['describe', '-j']);
     if (r.code !== 0) {

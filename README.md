@@ -51,6 +51,17 @@ npm run build        # builds packages/orca-plugin/dist
 
 In Orca, open **Settings → Plugin Development** and add the `packages/orca-plugin/dist` folder. The LocalDock tab appears in the right sidebar and shows **"Waiting on Orca"**, listing the capability it's blocked on. That's expected until the gaps are filled.
 
+## Clear a pulled site out of a project
+
+To start over after a cancelled, failed or finished pull:
+
+```sh
+npm run reset-project -- <project folder>         # shows what would be deleted
+npm run reset-project -- <project folder> --yes   # deletes it
+```
+
+It deletes the site's DDEV project (containers and database) and every file except `.git` and the other files a new project starts with. It refuses folders without a `.localdock` folder.
+
 ## Requirements (once it works)
 
 - [Orca](https://github.com/stablyai/orca) 1.4.222 or later, with plugins enabled

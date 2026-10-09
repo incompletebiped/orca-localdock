@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import {
   LocalDockError,
   TABLE_GROUPS,
@@ -71,6 +72,8 @@ export class LocalDockController {
   private readonly sessions = new Map<string, { session: RemoteSession; asRoot: boolean; username: string }>();
   private discovered: { hostId: string; sites: DiscoveredSite[] } | null = null;
   private project: ProjectInfo | null = null;
+  /** The project a running job works in, and the view it showed, so switching projects mid-job keeps them apart. */
+  private jobHome: { dir: string; view: PanelView } | null = null;
   private ddevVersion: string | null | undefined;
   private readonly logger: Logger;
 
@@ -79,7 +82,14 @@ export class LocalDockController {
   }
 
   state(): PanelState {
-    return { ...this.view, revision: this.revision, job: this.job, notice: this.notice };
+    const away = this.job && this.jobHome && !this.here(this.jobHome.dir) ? this.jobHome : null;
+    if (!away) return { ...this.view, revision: this.revision, job: this.job, notice: this.notice };
+    const elsewhere: Notice = { kind: 'info', text: `${this.job!.title} is running in ${path.basename(away.dir)}. Switch back to that project to follow or cancel it.` };
+    return { ...this.view, revision: this.revision, job: null, notice: this.notice ?? elsewhere };
+  }
+
+  private here(dir: string): boolean {
+    return this.project?.path === dir;
   }
 
   private emit(): void {
@@ -117,13 +127,16 @@ export class LocalDockController {
       this.setNotice({ kind: 'info', text: `Wait for "${this.job.title}" to finish.` });
       return this.state();
     }
+    // Only a refresh can run alongside a job; it must leave that job (and its cancel handle) alone.
+    const ownsJob = this.job === null;
     try {
       await this.run(action);
     } catch (err) {
       this.fail(err, action.type);
     } finally {
-      if (this.job) {
+      if (ownsJob && this.job) {
         this.job = null;
+        this.jobHome = null;
         this.abort = null;
         this.emit();
       }
@@ -196,8 +209,10 @@ export class LocalDockController {
   async refresh(): Promise<void> {
     this.project = await this.deps.host.activeProject();
     if (!this.project) return this.setView({ view: 'no-project' });
+    if (this.job && this.jobHome && this.here(this.jobHome.dir)) return this.setView(this.jobHome.view);
     const state = await readSiteState(this.project.path);
     if (state) return this.refreshTracking(state);
+    if (!(await this.requireEmptyProject())) return;
     if (this.discovered) {
       const host = (await this.deps.host.listSshHosts()).find((h) => h.id === this.discovered!.hostId);
       if (host) {
@@ -212,7 +227,17 @@ export class LocalDockController {
     return this.showHosts();
   }
 
+  /** Servers are only offered in an empty project, since a pull fills the project folder. */
+  private async requireEmptyProject(): Promise<ProjectInfo | null> {
+    const project = await this.requireProject();
+    if (await isEmptyProject(project.path)) return project;
+    this.discovered = null;
+    this.setView({ view: 'project-not-empty', projectName: path.basename(project.path) });
+    return null;
+  }
+
   private async showHosts(): Promise<void> {
+    if (!(await this.requireEmptyProject())) return;
     const hosts = await this.deps.host.listSshHosts();
     this.setView(hosts.length === 0 ? { view: 'no-hosts' } : { view: 'choose-host', hosts: hosts.map(hostSummary) });
   }
@@ -241,9 +266,10 @@ export class LocalDockController {
     return entry;
   }
 
-  private async context(hostId: string, title: string, cancellable: boolean): Promise<OperationContext> {
+  private async context(hostId: string, dir: string, title: string, cancellable: boolean): Promise<OperationContext> {
     const { session, asRoot } = await this.session(hostId);
     this.abort = new AbortController();
+    this.jobHome = { dir, view: this.view };
     this.job = { title, message: 'Starting…', cancellable };
     this.emit();
     return {
@@ -262,7 +288,8 @@ export class LocalDockController {
   }
 
   private async scanSites(hostId: string): Promise<void> {
-    const project = await this.requireProject();
+    const project = await this.requireEmptyProject();
+    if (!project) return;
     const host = await this.requireHost(hostId);
     this.setView({ view: 'scanning', host: hostSummary(host) });
     const { session, username } = await this.session(hostId);
@@ -286,7 +313,7 @@ export class LocalDockController {
     const host = await this.requireHost(hostId);
     this.setView({ view: 'pulling', host: hostSummary(host), site: siteSummary(site) });
 
-    const ctx = await this.context(hostId, `Pulling ${domain}`, true);
+    const ctx = await this.context(hostId, project.path, `Pulling ${domain}`, true);
     const installed = (await this.ddevInstalled()) !== null;
     const result = await pullSite(ctx, { hostId, site, projectDir: project.path, exclude: { includeUploads }, start: installed });
     await this.rememberHostLabel(host);
@@ -295,7 +322,7 @@ export class LocalDockController {
       ? { kind: 'error', text: `Pulled ${result.fileCount - result.failed.length} of ${result.fileCount} files. ${result.failed.length} failed: ${result.failed.slice(0, 3).map((f) => f.path).join(', ')}…` }
       : { kind: 'success', text: installed ? `Pulled ${domain} and started it with DDEV.` : `Pulled ${domain}. Install DDEV to run it locally.` };
     await this.deps.host.notify('LocalDock', `Pulled ${domain}`).catch(() => {});
-    await this.refreshTracking(result.state);
+    await (this.here(project.path) ? this.refreshTracking(result.state) : this.refresh());
   }
 
   private async refreshTracking(state?: SiteState): Promise<void> {
@@ -326,14 +353,14 @@ export class LocalDockController {
     const project = await this.requireProject();
     const state = await readSiteState(project.path);
     if (!state) throw new LocalDockError('This project has no pulled site.', 'NOT_FOUND', false);
-    const ctx = await this.context(state.hostId, title, cancellable);
+    const ctx = await this.context(state.hostId, project.path, title, cancellable);
     await fn(ctx, project.path, state);
   }
 
   private async scanChanges(): Promise<void> {
     await this.tracked('Checking for changes', true, async (ctx, dir) => {
       const changes = await computeSiteChanges(ctx, dir);
-      if (this.view.view === 'tracking') {
+      if (this.view.view === 'tracking' && this.here(dir)) {
         this.view = { ...this.view, changes: { rows: changes.entries, scannedAt: new Date().toISOString() } };
         this.emit();
       }
@@ -389,7 +416,7 @@ export class LocalDockController {
   private async pushDb(groups: TableGroup[]): Promise<void> {
     await this.tracked('Pushing the database', false, async (ctx, dir) => {
       const r = await pushDatabase(ctx, dir, groups);
-      if (this.view.view === 'tracking') this.view = { ...this.view, lastBackup: r.backup.path };
+      if (this.view.view === 'tracking' && this.here(dir)) this.view = { ...this.view, lastBackup: r.backup.path };
       this.notice = { kind: 'success', text: `Pushed ${r.tables.length} table(s). The live database was backed up first; you can roll back.` };
       this.emit();
     });

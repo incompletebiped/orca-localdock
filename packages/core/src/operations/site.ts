@@ -29,7 +29,10 @@ import type { OperationContext, TransferFailure } from './context.js';
 import { downloadOne, requireState } from './fileSync.js';
 
 /** Entries a freshly created Orca project may already contain. Anything else means the folder isn't empty. */
-const IGNORABLE_PROJECT_ENTRIES = new Set(['.git', '.orca', '.gitignore', '.gitattributes', '.DS_Store', 'Thumbs.db', '.vscode', '.idea']);
+/** What a brand-new project may already hold. It still counts as empty, and a reset keeps these. */
+export const PROJECT_SCAFFOLD_ENTRIES: ReadonlySet<string> = new Set(['.git', '.orca', '.gitignore', '.gitattributes', '.DS_Store', 'Thumbs.db', '.vscode', '.idea']);
+// LOCALDOCK_DIR too: a cancelled pull can leave it behind, and it never holds the user's own files.
+const IGNORABLE_PROJECT_ENTRIES = new Set([LOCALDOCK_DIR, ...PROJECT_SCAFFOLD_ENTRIES]);
 
 export async function isEmptyProject(projectDir: string): Promise<boolean> {
   try {

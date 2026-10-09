@@ -72,6 +72,12 @@ function renderView(state: PanelState, ui: UiState): string {
       return renderAwaitingOrca(state.gaps, state.blockedAction);
     case 'no-project':
       return empty('No project open', 'Create or open a project in Orca, then come back here. LocalDock pulls a WordPress site into an empty project.');
+    case 'project-not-empty':
+      return empty(
+        'This project already has files',
+        `LocalDock pulls a WordPress site into a new, empty project, so “${state.projectName}” can’t take one. Create an empty project in Orca, open it, then check again.`,
+        button('Check again', { type: 'refresh' }, { primary: true }),
+      );
     case 'no-hosts':
       return empty(
         'Connect a cPanel server',
