@@ -19,6 +19,7 @@ import {
   startSite,
   stopSite,
   type Ddev,
+  type DdevCheck,
   type DiscoveredSite,
   type Logger,
   type OperationContext,
@@ -75,7 +76,6 @@ export class LocalDockController {
   private project: ProjectInfo | null = null;
   /** The project a running job works in, and the view it showed, so switching projects mid-job keeps them apart. */
   private jobHome: { dir: string; view: PanelView } | null = null;
-  private ddevVersion: string | null = null;
   private readonly logger: Logger;
 
   constructor(private readonly deps: ControllerDeps) {
@@ -324,13 +324,16 @@ export class LocalDockController {
     this.setView({ view: 'pulling', host: hostSummary(host), site: siteSummary(site) });
 
     const ctx = await this.context(hostId, project.path, `Pulling ${domain}`, true);
-    const installed = (await this.ddevInstalled()) !== null;
+    const ddev = await this.ddevCheck();
+    const installed = ddev.version !== null && !ddev.dockerError;
     const result = await pullSite(ctx, { hostId, site, projectDir: project.path, exclude: { includeUploads }, start: installed });
     await this.rememberHostLabel(host);
     this.discovered = null;
     this.notice = result.failed.length
       ? { kind: 'error', text: `Pulled ${result.fileCount - result.failed.length} of ${result.fileCount} files. ${result.failed.length} failed: ${result.failed.slice(0, 3).map((f) => f.path).join(', ')}…` }
-      : { kind: 'success', text: installed ? `Pulled ${domain} and started it with DDEV.` : `Pulled ${domain}, files and database. Install DDEV, then Start loads the database locally.` };
+      : { kind: 'success', text: installed ? `Pulled ${domain} and started it with DDEV.` : ddev.version === null
+          ? `Pulled ${domain}, files and database. Install DDEV, then Start loads the database locally.`
+          : `Pulled ${domain}, files and database. Start Docker Desktop, then Start loads the database locally.` };
     await this.deps.host.notify('LocalDock', `Pulled ${domain}`).catch(() => {});
     await (this.here(project.path) ? this.refreshTracking(result.state) : this.refresh());
   }
@@ -390,8 +393,12 @@ export class LocalDockController {
   }
 
   private async startStop(which: 'start' | 'stop'): Promise<void> {
-    if ((await this.ddevInstalled()) === null) {
+    const ddev = await this.ddevCheck();
+    if (ddev.version === null) {
       throw new LocalDockError('DDEV is not installed. See https://ddev.com/get-started/', 'DOCKER_NOT_FOUND', false);
+    }
+    if (ddev.dockerError) {
+      throw new LocalDockError('Docker isn’t running. Start Docker Desktop, then try again.', 'DOCKER_NOT_FOUND', false);
     }
     await this.tracked(which === 'start' ? 'Starting DDEV' : 'Stopping DDEV', false, async (ctx, dir) => {
       if (which === 'start') await startSite(ctx, dir);
@@ -434,14 +441,15 @@ export class LocalDockController {
 
   // ---- helpers ------------------------------------------------------------
 
-  private async ddevInstalled(): Promise<string | null> {
-    // Only a found DDEV is remembered, so installing it later is picked up without a restart.
-    this.ddevVersion ??= await this.deps.ddev.version();
-    return this.ddevVersion;
+  /** DDEV's version and whether Docker is reachable, checked every time: DDEV gets installed, Docker started and stopped. */
+  private ddevCheck(): Promise<DdevCheck> {
+    return this.deps.ddev.check();
   }
 
   private async ddevInfo(dir: string): Promise<DdevInfo> {
-    if ((await this.ddevInstalled()) === null) return { status: 'not-installed' };
+    const check = await this.ddevCheck();
+    if (check.version === null) return { status: 'not-installed' };
+    if (check.dockerError) return { status: 'docker-not-running' };
     const d = await this.deps.ddev.describe(dir);
     return { status: d.status, url: d.url, mailpitUrl: d.mailpitUrl };
   }

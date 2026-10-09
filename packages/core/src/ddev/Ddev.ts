@@ -31,6 +31,29 @@ export interface DdevConfigOptions {
   database?: string;
 }
 
+export interface DdevCheck {
+  /** Installed DDEV version, or null when DDEV isn't installed. */
+  version: string | null;
+  /** DDEV is installed but can't reach Docker (e.g. Docker Desktop isn't running). */
+  dockerError?: string;
+  /** DDEV is installed but `ddev version` failed for another reason. */
+  error?: string;
+}
+
+/** Parse the JSON objects in DDEV's `-j` output (one per line), skipping anything else. */
+function jsonLines(text: string): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const line of text.split('\n')) {
+    try {
+      const o: unknown = JSON.parse(line);
+      if (o && typeof o === 'object') out.push(o as Record<string, unknown>);
+    } catch {
+      // Not JSON.
+    }
+  }
+  return out;
+}
+
 /** DDEV's own database credentials inside its db container. */
 export const DDEV_DB = { name: 'db', user: 'db', password: 'db' } as const;
 
@@ -81,21 +104,32 @@ export class Ddev {
 
   /** DDEV version, or null when DDEV isn't installed. */
   async version(): Promise<string | null> {
+    return (await this.check()).version;
+  }
+
+  /**
+   * Whether DDEV is installed, and whether Docker is reachable. `ddev version`
+   * fails when Docker isn't running (common right after a reboot) but still
+   * prints its version, so that case is reported as `dockerError`, not as
+   * "not installed".
+   */
+  async check(): Promise<DdevCheck> {
     let r = await this.runner.run(this.binary, ['version', '-j'], { env: this.env });
     // Not on PATH (127): an app started before DDEV was installed keeps its old PATH. Try where installers put it.
     if (r.code === 127) {
       const found = await firstExisting(this.locations);
-      if (!found) return null;
+      if (!found) return { version: null };
       this.useBinary(found);
       r = await this.runner.run(this.binary, ['version', '-j'], { env: this.env });
     }
-    if (r.code !== 0) return null;
-    try {
-      const raw = (JSON.parse(r.stdout) as { raw?: Record<string, string> }).raw ?? {};
-      return raw['DDEV version'] ?? 'unknown';
-    } catch {
-      return 'unknown';
-    }
+    const version = jsonLines(r.stdout).map((o) => (o['raw'] as Record<string, unknown> | undefined)?.['DDEV version']).find((v) => typeof v === 'string') as
+      | string
+      | undefined;
+    if (r.code === 0) return { version: version ?? 'unknown' };
+    if (!version) return { version: null };
+    const fatal = jsonLines(r.stderr).find((o) => o['level'] === 'fatal')?.['msg'];
+    const message = (typeof fatal === 'string' ? fatal : r.stderr).trim().split('\n')[0]!;
+    return /docker/i.test(message) ? { version, dockerError: message } : { version, error: message };
   }
 
   private useBinary(binary: string): void {

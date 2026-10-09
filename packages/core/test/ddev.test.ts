@@ -74,6 +74,24 @@ describe('finding DDEV off PATH', () => {
   });
 });
 
+describe('checking DDEV and Docker', () => {
+  const fixture = (name: string) => fs.readFile(path.join(import.meta.dirname, 'fixtures', name), 'utf-8');
+
+  it('reports Docker not running (real `ddev version -j` output) instead of "not installed"', async () => {
+    const [stdout, stderr] = await Promise.all([fixture('ddev-version-docker-down.stdout.txt'), fixture('ddev-version-docker-down.stderr.txt')]);
+    const ddev = new Ddev({ run: async () => ({ code: 1, stdout, stderr }) }, { locations: [] });
+    const check = await ddev.check();
+    expect(check.version).toBe('v1.25.4');
+    expect(check.dockerError).toMatch(/^Docker error: failed to connect to the docker API/);
+    expect(await ddev.version()).toBe('v1.25.4');
+  });
+
+  it('reports not installed only when there is no DDEV at all', async () => {
+    const ddev = new Ddev({ run: async () => ({ code: 127, stdout: '', stderr: 'spawn ddev ENOENT' }) }, { locations: [] });
+    expect(await ddev.check()).toEqual({ version: null });
+  });
+});
+
 describe('Ddev', () => {
   it('configures a WordPress project on Apache matching the server versions', async () => {
     const { runner, calls } = fakeRunner();

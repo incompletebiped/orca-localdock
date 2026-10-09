@@ -42,7 +42,7 @@ export interface ChangeRow {
   direction: Direction;
 }
 
-export type DdevStatus = 'not-installed' | 'not-configured' | 'stopped' | 'starting' | 'running' | 'paused' | 'unhealthy' | 'unknown';
+export type DdevStatus = 'not-installed' | 'docker-not-running' | 'not-configured' | 'stopped' | 'starting' | 'running' | 'paused' | 'unhealthy' | 'unknown';
 
 export interface DdevInfo {
   status: DdevStatus;

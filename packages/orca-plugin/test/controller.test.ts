@@ -251,6 +251,24 @@ describe('LocalDockController', () => {
     expect(await ctl.dispatch({ type: 'refresh' })).not.toMatchObject({ ddev: { status: 'not-installed' } });
   });
 
+  it('says Docker is not running instead of "install DDEV", and Start explains it', async () => {
+    const dockerDown: CommandRunner = {
+      run: async () => ({
+        code: 1,
+        stdout: JSON.stringify({ level: 'info', raw: { 'DDEV version': 'v1.25.4' } }),
+        stderr: JSON.stringify({ level: 'fatal', msg: 'Docker error: failed to connect to the docker API' }),
+      }),
+    };
+    ctl = new LocalDockController({ host, ddev: new Ddev(dockerDown, { locations: [] }), publish: () => {} });
+    host.project = { path: dir, name: 'p' };
+    await writeSiteState(dir, {
+      version: 1, hostId: 'h1', account: 'exampleco', domain: 'example.com', docroot: '/home/exampleco/public_html',
+      productionUrl: 'https://example.com', tablePrefix: 'wp_', pulledAt: new Date().toISOString(), files: {},
+    });
+    expect(await ctl.dispatch({ type: 'refresh' })).toMatchObject({ ddev: { status: 'docker-not-running' } });
+    expect((await ctl.dispatch({ type: 'start' })).notice?.text).toMatch(/Docker isn’t running. Start Docker Desktop/);
+  });
+
   it('rejects malformed actions without running anything', async () => {
     const s = await ctl.dispatch({ type: 'push-files', paths: [] });
     expect(s.notice).toMatchObject({ kind: 'error' });
