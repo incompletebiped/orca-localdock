@@ -1,5 +1,6 @@
 import { createReadStream, createWriteStream } from 'node:fs';
 import { access } from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { z } from 'zod';
 import { LocalDockError } from '../errors.js';
@@ -50,8 +51,8 @@ const describeSchema = z.object({
 export class Ddev {
   private readonly log: Logger;
   private binary: string;
-  /** Set when DDEV was found outside PATH: PATH with DDEV's folder first, so its helper programs resolve too. */
-  private env: NodeJS.ProcessEnv | undefined;
+  /** The environment DDEV runs with: see ddevEnv(). */
+  private env: NodeJS.ProcessEnv = ddevEnv();
   private readonly locations: readonly string[];
 
   constructor(
@@ -97,8 +98,7 @@ export class Ddev {
 
   private useBinary(binary: string): void {
     this.binary = binary;
-    const key = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
-    this.env = { ...process.env, [key]: [path.dirname(binary), process.env[key]].filter(Boolean).join(path.delimiter) };
+    this.env = ddevEnv(process.env, process.platform, path.dirname(binary));
     this.log.info(`Using DDEV at ${binary} (not on PATH)`);
   }
 
@@ -226,15 +226,45 @@ export function normalizeStatus(s: string | undefined): DdevStatus {
 }
 
 /** Where DDEV's installers put the binary, for when it isn't on PATH. */
-export function ddevInstallLocations(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): string[] {
+export function ddevInstallLocations(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env, home = os.homedir()): string[] {
   if (platform === 'win32') {
-    return [
-      env['LOCALAPPDATA'] && path.win32.join(env['LOCALAPPDATA'], 'Programs', 'DDEV', 'ddev.exe'),
-      env['ProgramFiles'] && path.win32.join(env['ProgramFiles'], 'DDEV', 'ddev.exe'),
-    ].filter((p): p is string => Boolean(p));
+    const win = windowsDirs(env, home);
+    return [path.win32.join(win.LOCALAPPDATA, 'Programs', 'DDEV', 'ddev.exe'), path.win32.join(win.ProgramFiles, 'DDEV', 'ddev.exe')];
   }
   // GUI apps on macOS don't get Homebrew's PATH.
   return ['/opt/homebrew/bin/ddev', '/usr/local/bin/ddev', '/home/linuxbrew/.linuxbrew/bin/ddev', '/usr/bin/ddev'];
+}
+
+/**
+ * The environment to run DDEV with. Hosts may start us with a trimmed
+ * environment (Orca passes plugin workers only PATH, HOME, USERPROFILE, TEMP
+ * and a few more), but on Windows DDEV, Docker and mkcert need the standard
+ * user folders, so missing ones are filled in. `extraPath` goes first on PATH.
+ */
+export function ddevEnv(base: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, extraPath?: string, home = os.homedir()): NodeJS.ProcessEnv {
+  const env = { ...base };
+  const keyOf = (name: string) => Object.keys(env).find((k) => k.toUpperCase() === name.toUpperCase());
+  if (platform === 'win32') {
+    for (const [name, value] of Object.entries(windowsDirs(base, home))) if (!keyOf(name)) env[name] = value;
+    if (!keyOf('USERNAME')) env['USERNAME'] = os.userInfo().username;
+  }
+  if (extraPath) {
+    const key = keyOf('PATH') ?? 'PATH';
+    env[key] = [extraPath, env[key]].filter(Boolean).join(platform === 'win32' ? ';' : ':');
+  }
+  return env;
+}
+
+/** Standard Windows folders, from the environment when present, otherwise derived from the home folder. */
+function windowsDirs(env: NodeJS.ProcessEnv, home: string): Record<'LOCALAPPDATA' | 'APPDATA' | 'ProgramFiles' | 'ProgramData', string> {
+  const get = (name: string) => Object.entries(env).find(([k]) => k.toUpperCase() === name.toUpperCase())?.[1];
+  const drive = get('SYSTEMDRIVE') ?? 'C:';
+  return {
+    LOCALAPPDATA: get('LOCALAPPDATA') ?? path.win32.join(home, 'AppData', 'Local'),
+    APPDATA: get('APPDATA') ?? path.win32.join(home, 'AppData', 'Roaming'),
+    ProgramFiles: get('ProgramFiles') ?? path.win32.join(`${drive}\\`, 'Program Files'),
+    ProgramData: get('ProgramData') ?? path.win32.join(`${drive}\\`, 'ProgramData'),
+  };
 }
 
 async function firstExisting(paths: readonly string[]): Promise<string | undefined> {

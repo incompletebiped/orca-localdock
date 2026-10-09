@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { Ddev, ddevInstallLocations, normalizeStatus } from '../src/ddev/Ddev.js';
+import { Ddev, ddevEnv, ddevInstallLocations, normalizeStatus } from '../src/ddev/Ddev.js';
 import type { CommandRunner, RunResult } from '../src/ddev/runner.js';
 import { localWpConfig, sanitizeHtaccess, uploadsProxyHtaccess } from '../src/ddev/templates.js';
 import { PathMatcher } from '../src/util/glob.js';
@@ -26,6 +26,24 @@ describe('finding DDEV off PATH', () => {
       'C:\\Program Files\\DDEV\\ddev.exe',
     ]);
     expect(ddevInstallLocations('darwin', {})).toContain('/opt/homebrew/bin/ddev');
+    // Orca's plugin workers get no LOCALAPPDATA or ProgramFiles: derive them.
+    expect(ddevInstallLocations('win32', { SYSTEMDRIVE: 'D:' }, 'D:\\Users\\u')).toEqual([
+      'D:\\Users\\u\\AppData\\Local\\Programs\\DDEV\\ddev.exe',
+      'D:\\Program Files\\DDEV\\ddev.exe',
+    ]);
+  });
+
+  it('restores the Windows folders a trimmed environment lacks, without overriding real ones', () => {
+    const env = ddevEnv({ Path: 'C:\\Windows', APPDATA: 'E:\\Roaming', USERNAME: 'u' }, 'win32', 'C:\\DDEV', 'C:\\Users\\u');
+    expect(env).toMatchObject({
+      Path: 'C:\\DDEV;C:\\Windows',
+      APPDATA: 'E:\\Roaming',
+      LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local',
+      ProgramFiles: 'C:\\Program Files',
+      USERNAME: 'u',
+    });
+    expect(env).not.toHaveProperty('PATH');
+    expect(ddevEnv({ PATH: '/usr/bin' }, 'linux')).toEqual({ PATH: '/usr/bin' });
   });
 
   it('falls back to an install location, with its folder first on PATH', async () => {
