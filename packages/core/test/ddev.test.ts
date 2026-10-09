@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { Ddev, normalizeStatus } from '../src/ddev/Ddev.js';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { Ddev, ddevInstallLocations, normalizeStatus } from '../src/ddev/Ddev.js';
 import type { CommandRunner, RunResult } from '../src/ddev/runner.js';
 import { localWpConfig, sanitizeHtaccess, uploadsProxyHtaccess } from '../src/ddev/templates.js';
 import { PathMatcher } from '../src/util/glob.js';
@@ -15,6 +18,43 @@ function fakeRunner(reply: (args: readonly string[]) => Partial<RunResult> = () 
   };
   return { runner, calls };
 }
+
+describe('finding DDEV off PATH', () => {
+  it('knows where the installers put it', () => {
+    expect(ddevInstallLocations('win32', { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local', ProgramFiles: 'C:\\Program Files' })).toEqual([
+      'C:\\Users\\u\\AppData\\Local\\Programs\\DDEV\\ddev.exe',
+      'C:\\Program Files\\DDEV\\ddev.exe',
+    ]);
+    expect(ddevInstallLocations('darwin', {})).toContain('/opt/homebrew/bin/ddev');
+  });
+
+  it('falls back to an install location, with its folder first on PATH', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-ddev-'));
+    const exe = path.join(dir, 'ddev.exe');
+    await fs.writeFile(exe, '');
+    const calls: Array<{ command: string; path?: string }> = [];
+    const runner: CommandRunner = {
+      async run(command, args, options) {
+        const env = options?.env;
+        calls.push({ command, path: env && Object.entries(env).find(([k]) => k.toUpperCase() === 'PATH')?.[1] });
+        if (command === 'ddev') return { code: 127, stdout: '', stderr: 'spawn ddev ENOENT' };
+        return { code: 0, stdout: JSON.stringify({ raw: { 'DDEV version': 'v1.25.4' } }), stderr: '' };
+      },
+    };
+    const ddev = new Ddev(runner, { locations: [path.join(dir, 'missing.exe'), exe] });
+    expect(await ddev.version()).toBe('v1.25.4');
+    await ddev.stop('/p');
+    expect(calls.map((c) => c.command)).toEqual(['ddev', exe, exe]);
+    expect(calls[2]!.path!.split(path.delimiter)[0]).toBe(dir);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('reports not installed when it is nowhere, and never searches for an explicit binary', async () => {
+    const missing: CommandRunner = { run: async () => ({ code: 127, stdout: '', stderr: '' }) };
+    expect(await new Ddev(missing, { locations: [path.join(os.tmpdir(), 'no-such-ddev')] }).version()).toBeNull();
+    expect(await new Ddev(missing, { binary: '/custom/ddev' }).version()).toBeNull();
+  });
+});
 
 describe('Ddev', () => {
   it('configures a WordPress project on Apache matching the server versions', async () => {

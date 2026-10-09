@@ -7,6 +7,8 @@ export interface RunOptions {
   /** Pipe stdout here instead of buffering it. */
   stdout?: Writable;
   signal?: AbortSignal;
+  /** Environment for the program (defaults to this process's). */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface RunResult {
@@ -24,7 +26,7 @@ export interface CommandRunner {
 export const processRunner: CommandRunner = {
   run(command, args, options = {}) {
     return new Promise((resolve) => {
-      const proc = spawn(command, [...args], { cwd: options.cwd, windowsHide: true, signal: options.signal });
+      const proc = spawn(command, [...args], { cwd: options.cwd, env: options.env, windowsHide: true, signal: options.signal });
       let stdout = '';
       let stderr = '';
       if (options.stdout) proc.stdout.pipe(options.stdout, { end: false });

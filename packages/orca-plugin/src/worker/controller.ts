@@ -66,7 +66,8 @@ function siteSummary(s: DiscoveredSite): SiteSummary {
 export class LocalDockController {
   private view: PanelView = { view: 'loading' };
   private job: Job | null = null;
-  private notice: Notice | null = null;
+  /** The panel notice and the project it's about; it only shows in that project. */
+  private noticeEntry: { notice: Notice; dir: string | null } | null = null;
   private revision = 0;
   private abort: AbortController | null = null;
   private readonly sessions = new Map<string, { session: RemoteSession; asRoot: boolean; username: string }>();
@@ -74,7 +75,7 @@ export class LocalDockController {
   private project: ProjectInfo | null = null;
   /** The project a running job works in, and the view it showed, so switching projects mid-job keeps them apart. */
   private jobHome: { dir: string; view: PanelView } | null = null;
-  private ddevVersion: string | null | undefined;
+  private ddevVersion: string | null = null;
   private readonly logger: Logger;
 
   constructor(private readonly deps: ControllerDeps) {
@@ -86,6 +87,15 @@ export class LocalDockController {
     if (!away) return { ...this.view, revision: this.revision, job: this.job, notice: this.notice };
     const elsewhere: Notice = { kind: 'info', text: `${this.job!.title} is running in ${path.basename(away.dir)}. Switch back to that project to follow or cancel it.` };
     return { ...this.view, revision: this.revision, job: null, notice: this.notice ?? elsewhere };
+  }
+
+  private get notice(): Notice | null {
+    const e = this.noticeEntry;
+    return e && (e.dir === null || this.here(e.dir)) ? e.notice : null;
+  }
+
+  private set notice(notice: Notice | null) {
+    this.noticeEntry = notice && { notice, dir: this.jobHome?.dir ?? this.project?.path ?? null };
   }
 
   private here(dir: string): boolean {
@@ -425,7 +435,8 @@ export class LocalDockController {
   // ---- helpers ------------------------------------------------------------
 
   private async ddevInstalled(): Promise<string | null> {
-    if (this.ddevVersion === undefined) this.ddevVersion = await this.deps.ddev.version();
+    // Only a found DDEV is remembered, so installing it later is picked up without a restart.
+    this.ddevVersion ??= await this.deps.ddev.version();
     return this.ddevVersion;
   }
 

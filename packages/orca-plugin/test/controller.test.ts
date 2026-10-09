@@ -223,6 +223,34 @@ describe('LocalDockController', () => {
     expect((await ctl.dispatch({ type: 'start' })).notice?.text).toMatch(/DDEV is not installed/);
   });
 
+  it('shows a notice only in the project it is about', async () => {
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-other-'));
+    host.project = { path: dir, name: 'main' };
+    await ctl.dispatch({ type: 'refresh' });
+    expect((await ctl.dispatch({ type: 'nope' })).notice).toMatchObject({ kind: 'error' });
+    host.project = { path: other, name: 'main' };
+    expect((await ctl.dispatch({ type: 'refresh' })).notice).toBeNull();
+    host.project = { path: dir, name: 'main' };
+    expect((await ctl.dispatch({ type: 'refresh' })).notice).toMatchObject({ kind: 'error' });
+  });
+
+  it('checks for DDEV again until it is found', async () => {
+    let installed = false;
+    const runner: CommandRunner = {
+      run: async () => (installed ? { code: 0, stdout: JSON.stringify({ raw: { 'DDEV version': 'v1.25.4' } }), stderr: '' } : { code: 127, stdout: '', stderr: '' }),
+    };
+    ctl = new LocalDockController({ host, ddev: new Ddev(runner, { locations: [] }), publish: () => {} });
+    host.project = { path: dir, name: 'p' };
+    await writeSiteState(dir, {
+      version: 1, hostId: 'h1', account: 'exampleco', domain: 'example.com', docroot: '/home/exampleco/public_html',
+      productionUrl: 'https://example.com', tablePrefix: 'wp_', pulledAt: new Date().toISOString(), files: {},
+    });
+    expect(await ctl.dispatch({ type: 'refresh' })).toMatchObject({ ddev: { status: 'not-installed' } });
+    installed = true;
+    expect((await ctl.dispatch({ type: 'refresh' })).view === 'tracking').toBe(true);
+    expect(await ctl.dispatch({ type: 'refresh' })).not.toMatchObject({ ddev: { status: 'not-installed' } });
+  });
+
   it('rejects malformed actions without running anything', async () => {
     const s = await ctl.dispatch({ type: 'push-files', paths: [] });
     expect(s.notice).toMatchObject({ kind: 'error' });

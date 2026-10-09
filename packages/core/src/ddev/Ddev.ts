@@ -1,4 +1,6 @@
 import { createReadStream, createWriteStream } from 'node:fs';
+import { access } from 'node:fs/promises';
+import * as path from 'node:path';
 import { z } from 'zod';
 import { LocalDockError } from '../errors.js';
 import { silentLogger, type Logger } from '../log.js';
@@ -47,19 +49,23 @@ const describeSchema = z.object({
  */
 export class Ddev {
   private readonly log: Logger;
-  private readonly binary: string;
+  private binary: string;
+  /** Set when DDEV was found outside PATH: PATH with DDEV's folder first, so its helper programs resolve too. */
+  private env: NodeJS.ProcessEnv | undefined;
+  private readonly locations: readonly string[];
 
   constructor(
     private readonly runner: CommandRunner = processRunner,
-    options: { logger?: Logger; binary?: string } = {},
+    options: { logger?: Logger; binary?: string; /** Where to look when `ddev` isn't on PATH. */ locations?: readonly string[] } = {},
   ) {
     this.log = (options.logger ?? silentLogger).child('ddev');
     this.binary = options.binary ?? 'ddev';
+    this.locations = options.binary ? [] : (options.locations ?? ddevInstallLocations());
   }
 
   private ddev(cwd: string, args: string[], io: Io = {}): Promise<RunResult> {
     this.log.debug(`ddev ${args.join(' ')}`);
-    return this.runner.run(this.binary, args, { cwd, ...io });
+    return this.runner.run(this.binary, args, { cwd, env: this.env, ...io });
   }
 
   private async must(cwd: string, args: string[], what: string, io?: Io): Promise<RunResult> {
@@ -72,7 +78,14 @@ export class Ddev {
 
   /** DDEV version, or null when DDEV isn't installed. */
   async version(): Promise<string | null> {
-    const r = await this.runner.run(this.binary, ['version', '-j']);
+    let r = await this.runner.run(this.binary, ['version', '-j'], { env: this.env });
+    // Not on PATH (127): an app started before DDEV was installed keeps its old PATH. Try where installers put it.
+    if (r.code === 127) {
+      const found = await firstExisting(this.locations);
+      if (!found) return null;
+      this.useBinary(found);
+      r = await this.runner.run(this.binary, ['version', '-j'], { env: this.env });
+    }
     if (r.code !== 0) return null;
     try {
       const raw = (JSON.parse(r.stdout) as { raw?: Record<string, string> }).raw ?? {};
@@ -80,6 +93,13 @@ export class Ddev {
     } catch {
       return 'unknown';
     }
+  }
+
+  private useBinary(binary: string): void {
+    this.binary = binary;
+    const key = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+    this.env = { ...process.env, [key]: [path.dirname(binary), process.env[key]].filter(Boolean).join(path.delimiter) };
+    this.log.info(`Using DDEV at ${binary} (not on PATH)`);
   }
 
   /**
@@ -203,4 +223,28 @@ export function normalizeStatus(s: string | undefined): DdevStatus {
     default:
       return /stopped|not running/i.test(s ?? '') ? 'stopped' : 'unknown';
   }
+}
+
+/** Where DDEV's installers put the binary, for when it isn't on PATH. */
+export function ddevInstallLocations(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): string[] {
+  if (platform === 'win32') {
+    return [
+      env['LOCALAPPDATA'] && path.win32.join(env['LOCALAPPDATA'], 'Programs', 'DDEV', 'ddev.exe'),
+      env['ProgramFiles'] && path.win32.join(env['ProgramFiles'], 'DDEV', 'ddev.exe'),
+    ].filter((p): p is string => Boolean(p));
+  }
+  // GUI apps on macOS don't get Homebrew's PATH.
+  return ['/opt/homebrew/bin/ddev', '/usr/local/bin/ddev', '/home/linuxbrew/.linuxbrew/bin/ddev', '/usr/bin/ddev'];
+}
+
+async function firstExisting(paths: readonly string[]): Promise<string | undefined> {
+  for (const p of paths) {
+    try {
+      await access(p);
+      return p;
+    } catch {
+      // Not there.
+    }
+  }
+  return undefined;
 }
