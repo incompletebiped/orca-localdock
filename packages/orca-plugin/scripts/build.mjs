@@ -56,8 +56,17 @@ await build({
   platform: 'node',
   target: 'node22',
   legalComments: 'none',
-  // Some dependencies are CommonJS and call require(); give the ESM bundle one.
-  banner: { js: "import { createRequire as __ldCreateRequire } from 'node:module'; const require = __ldCreateRequire(import.meta.url);" },
+  // Some dependencies are CommonJS and use require() and __dirname (ssh2); give the ESM bundle both.
+  banner: {
+    js: [
+      "import { createRequire as __ldCreateRequire } from 'node:module';",
+      "import { fileURLToPath as __ldFileURLToPath } from 'node:url';",
+      "import { dirname as __ldDirname } from 'node:path';",
+      'const require = __ldCreateRequire(import.meta.url);',
+      'const __filename = __ldFileURLToPath(import.meta.url);',
+      'const __dirname = __ldDirname(__filename);',
+    ].join(' '),
+  },
   logLevel: 'warning',
 });
 
