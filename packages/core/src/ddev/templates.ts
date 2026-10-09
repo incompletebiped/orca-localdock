@@ -47,10 +47,33 @@ RewriteRule ^(.*)$ ${base}/wp-content/uploads/$1 [R=302,L]
 `;
 }
 
-export const DEV_MU_PLUGIN = `<?php
+/** A PHP single-quoted string literal. */
+function phpString(s: string): string {
+  return `'${s.replace(/[\\']/g, (c) => `\\${c}`)}'`;
+}
+
+/** wp-content/mu-plugins/localdock-dev.php: local development helpers. */
+export function devMuPlugin(productionUrl: string): string {
+  return `<?php
 /**
  * LocalDock: local development helpers. Written by LocalDock (local only, never pushed).
  */
+
+// Media that wasn't pulled: send the browser to the live site's copy. wp-content/uploads/.htaccess does the
+// same, but it doesn't always reach the web server: Docker can't mount the uploads folder from some drives
+// (e.g. a removable drive on Windows), and nginx ignores .htaccess. Missing files end up here either way.
+( function () {
+	$uri  = (string) parse_url( isset( $_SERVER['REQUEST_URI'] ) ? $_SERVER['REQUEST_URI'] : '', PHP_URL_PATH );
+	$path = rawurldecode( $uri );
+	if ( strpos( $path, '/wp-content/uploads/' ) !== 0 || strpos( $path, '..' ) !== false ) {
+		return;
+	}
+	if ( is_file( ABSPATH . ltrim( $path, '/' ) ) ) {
+		return;
+	}
+	header( 'Location: ' . ${phpString(productionUrl.replace(/\/$/, ''))} . $uri, true, 302 );
+	exit;
+} )();
 
 // Page-cache and asset-optimization plugins hide edits locally; switch them off.
 add_filter( 'option_active_plugins', function ( $plugins ) {
@@ -74,6 +97,7 @@ add_filter( 'option_active_plugins', function ( $plugins ) {
 // Keep the local copy out of search engines.
 add_filter( 'pre_option_blog_public', '__return_zero' );
 `;
+}
 
 /** Drop HTTPS and canonical-host redirects from the root .htaccess; they break the local URL. */
 export function sanitizeHtaccess(content: string): string {

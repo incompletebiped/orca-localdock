@@ -16,7 +16,7 @@ import {
 import { urlReplacePairs } from '../db/searchReplace.js';
 import { groupTables, type TableGroup } from '../db/tableGroups.js';
 import type { Ddev, DdevDescription } from '../ddev/Ddev.js';
-import { DEV_MU_PLUGIN, localWpConfig, sanitizeHtaccess, uploadsProxyHtaccess } from '../ddev/templates.js';
+import { devMuPlugin, localWpConfig, sanitizeHtaccess, uploadsProxyHtaccess } from '../ddev/templates.js';
 import type { DiscoveredSite } from '../discovery/discover.js';
 import { excludePatterns, type ExcludeOptions } from '../sync/excludes.js';
 import { listRemoteFiles } from '../sync/remoteScan.js';
@@ -167,9 +167,7 @@ export function dumpPath(projectDir: string): string {
 /** Files that exist only locally: wp-config.php, the dev mu-plugin, the uploads proxy, a sanitized .htaccess. */
 async function writeLocalFiles(projectDir: string, state: SiteState): Promise<void> {
   await fs.writeFile(path.join(projectDir, 'wp-config.php'), localWpConfig(state.tablePrefix), { mode: 0o600 });
-  const mu = path.join(projectDir, 'wp-content', 'mu-plugins');
-  await fs.mkdir(mu, { recursive: true });
-  await fs.writeFile(path.join(mu, 'localdock-dev.php'), DEV_MU_PLUGIN);
+  await writeDevMuPlugin(projectDir, state);
   const uploads = path.join(projectDir, 'wp-content', 'uploads');
   await fs.mkdir(uploads, { recursive: true });
   await fs.writeFile(path.join(uploads, '.htaccess'), uploadsProxyHtaccess(state.productionUrl));
@@ -183,12 +181,20 @@ async function writeLocalFiles(projectDir: string, state: SiteState): Promise<vo
   }
 }
 
+/** Written on every start too, so projects pulled with an older LocalDock get its fixes. */
+async function writeDevMuPlugin(projectDir: string, state: SiteState): Promise<void> {
+  const mu = path.join(projectDir, 'wp-content', 'mu-plugins');
+  await fs.mkdir(mu, { recursive: true });
+  await fs.writeFile(path.join(mu, 'localdock-dev.php'), devMuPlugin(state.productionUrl));
+}
+
 /**
  * Start DDEV. With `importDump`, load `.localdock/db.sql` and rewrite the
  * production URL to DDEV's local URL.
  */
 export async function startSite(ctx: OperationContext, projectDir: string, opts: { importDump?: boolean } = {}): Promise<DdevDescription> {
   const state = await requireState(projectDir);
+  await writeDevMuPlugin(projectDir, state);
   ctx.progress({ phase: 'ddev', message: 'Starting DDEV…' });
   await ctx.ddev.start(projectDir, ctx.signal);
   const info = await ctx.ddev.describe(projectDir);

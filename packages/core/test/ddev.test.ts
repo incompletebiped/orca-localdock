@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { Ddev, ddevEnv, ddevInstallLocations, dockerDesktopLocations, normalizeStatus } from '../src/ddev/Ddev.js';
 import type { CommandRunner, RunResult } from '../src/ddev/runner.js';
-import { localWpConfig, sanitizeHtaccess, uploadsProxyHtaccess } from '../src/ddev/templates.js';
+import { devMuPlugin, localWpConfig, sanitizeHtaccess, uploadsProxyHtaccess } from '../src/ddev/templates.js';
 import { PathMatcher } from '../src/util/glob.js';
 import { excludePatterns } from '../src/sync/excludes.js';
 
@@ -218,6 +218,12 @@ describe('local templates', () => {
 
   it('proxies missing uploads to production', () => {
     expect(uploadsProxyHtaccess('https://example.com/')).toContain('https://example.com/wp-content/uploads/$1 [R=302,L]');
+  });
+
+  it('also sends missing media to production from the mu-plugin, for when the .htaccess never reaches the server', () => {
+    const php = devMuPlugin('https://example.com/');
+    expect(php).toContain(`header( 'Location: ' . 'https://example.com' . $uri, true, 302 );`);
+    expect(devMuPlugin("https://ex'ample.com\\")).toContain(`'https://ex\\'ample.com\\\\'`);
   });
 
   it('never syncs DDEV and project metadata', () => {
