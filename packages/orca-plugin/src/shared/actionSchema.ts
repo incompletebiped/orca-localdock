@@ -21,6 +21,7 @@ export const panelActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('pull-files'), paths: z.array(relPath).min(1).max(20000), allowConflicts: z.boolean().default(false) }),
   z.object({ type: z.literal('start') }),
   z.object({ type: z.literal('stop') }),
+  z.object({ type: z.literal('start-docker') }),
   z.object({ type: z.literal('open'), target: z.enum(['site', 'admin', 'mailpit', 'live']) }),
   z.object({ type: z.literal('load-db-groups') }),
   z.object({ type: z.literal('push-db'), groups: z.array(tableGroup).min(1) }),

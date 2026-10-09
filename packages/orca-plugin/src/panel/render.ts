@@ -182,7 +182,7 @@ function renderTracking(state: Extract<PanelState, { view: 'tracking' }>, ui: Ui
     ddev.status === 'not-installed'
       ? `<p class="notice notice-info">Install <strong>DDEV</strong> to run this site locally (ddev.com).</p>`
       : ddev.status === 'docker-not-running'
-        ? `<div class="notice notice-info"><span>Docker isn’t running. Start <strong>Docker Desktop</strong>, then check again.</span>${button('Check again', { type: 'refresh' }, { disabled: busy })}</div>`
+        ? `<div class="notice notice-info"><span>Docker isn’t running, so the local site can’t start.</span>${button('Start Docker Desktop', { type: 'start-docker' }, { primary: true, disabled: busy })}${button('Check again', { type: 'refresh' }, { disabled: busy })}</div>`
         : `<div class="ddev">
           <span class="dot ${running ? 'dot-on' : 'dot-off'}"></span>
           <span class="grow">${running ? `Running at <code>${esc(ddev.url ?? '')}</code>` : `Local site ${esc(ddev.status.replace('-', ' '))}`}</span>

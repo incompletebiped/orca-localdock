@@ -251,22 +251,37 @@ describe('LocalDockController', () => {
     expect(await ctl.dispatch({ type: 'refresh' })).not.toMatchObject({ ddev: { status: 'not-installed' } });
   });
 
-  it('says Docker is not running instead of "install DDEV", and Start explains it', async () => {
-    const dockerDown: CommandRunner = {
-      run: async () => ({
-        code: 1,
-        stdout: JSON.stringify({ level: 'info', raw: { 'DDEV version': 'v1.25.4' } }),
-        stderr: JSON.stringify({ level: 'fatal', msg: 'Docker error: failed to connect to the docker API' }),
-      }),
+  it('says Docker is not running instead of "install DDEV", and opens Docker Desktop on request', async () => {
+    let dockerUp = false;
+    const launched: string[] = [];
+    const runner: CommandRunner = {
+      run: async () =>
+        dockerUp
+          ? { code: 0, stdout: JSON.stringify({ raw: { 'DDEV version': 'v1.25.4' } }), stderr: '' }
+          : {
+              code: 1,
+              stdout: JSON.stringify({ level: 'info', raw: { 'DDEV version': 'v1.25.4' } }),
+              stderr: JSON.stringify({ level: 'fatal', msg: 'Docker error: failed to connect to the docker API' }),
+            },
     };
-    ctl = new LocalDockController({ host, ddev: new Ddev(dockerDown, { locations: [] }), publish: () => {} });
+    const app = path.join(dir, 'Docker Desktop.exe');
+    await fs.writeFile(app, '');
+    const ddev = new Ddev(runner, { locations: [], dockerLocations: [app], launcher: async (cmd) => void launched.push(cmd) });
+    // Docker comes up a moment after the app is launched.
+    vi.spyOn(ddev, 'waitForDocker').mockImplementation(async () => void (dockerUp = launched.length > 0));
+    ctl = new LocalDockController({ host, ddev, publish: () => {} });
     host.project = { path: dir, name: 'p' };
     await writeSiteState(dir, {
       version: 1, hostId: 'h1', account: 'exampleco', domain: 'example.com', docroot: '/home/exampleco/public_html',
       productionUrl: 'https://example.com', tablePrefix: 'wp_', pulledAt: new Date().toISOString(), files: {},
     });
     expect(await ctl.dispatch({ type: 'refresh' })).toMatchObject({ ddev: { status: 'docker-not-running' } });
-    expect((await ctl.dispatch({ type: 'start' })).notice?.text).toMatch(/Docker isn’t running. Start Docker Desktop/);
+    expect((await ctl.dispatch({ type: 'stop' })).notice?.text).toMatch(/Docker isn’t running/);
+    expect(launched).toEqual([]);
+    const s = await ctl.dispatch({ type: 'start-docker' });
+    expect(launched).toEqual([app]);
+    expect(s).toMatchObject({ job: null, notice: { kind: 'success', text: 'Docker is running.' } });
+    expect(s).not.toMatchObject({ ddev: { status: 'docker-not-running' } });
   });
 
   it('rejects malformed actions without running anything', async () => {

@@ -4,11 +4,11 @@ import { Transform } from 'node:stream';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { z } from 'zod';
-import { LocalDockError } from '../errors.js';
+import { LocalDockError, throwIfAborted } from '../errors.js';
 import { silentLogger, type Logger } from '../log.js';
 import { byteCounter, type ByteProgress } from '../util/format.js';
 import { assertValid, isValidDbIdentifier, slugify } from '../util/shell.js';
-import { processRunner, type CommandRunner, type RunOptions, type RunResult } from './runner.js';
+import { detachedLauncher, processRunner, type AppLauncher, type CommandRunner, type RunOptions, type RunResult } from './runner.js';
 
 type Io = Pick<RunOptions, 'stdin' | 'stdout' | 'signal'>;
 
@@ -79,14 +79,26 @@ export class Ddev {
   /** The environment DDEV runs with: see ddevEnv(). */
   private env: NodeJS.ProcessEnv = ddevEnv();
   private readonly locations: readonly string[];
+  private readonly dockerLocations: readonly string[];
+  private readonly launcher: AppLauncher;
 
   constructor(
     private readonly runner: CommandRunner = processRunner,
-    options: { logger?: Logger; binary?: string; /** Where to look when `ddev` isn't on PATH. */ locations?: readonly string[] } = {},
+    options: {
+      logger?: Logger;
+      binary?: string;
+      /** Where to look when `ddev` isn't on PATH. */
+      locations?: readonly string[];
+      /** Where to look for the Docker Desktop app. */
+      dockerLocations?: readonly string[];
+      launcher?: AppLauncher;
+    } = {},
   ) {
     this.log = (options.logger ?? silentLogger).child('ddev');
     this.binary = options.binary ?? 'ddev';
     this.locations = options.binary ? [] : (options.locations ?? ddevInstallLocations());
+    this.dockerLocations = options.dockerLocations ?? dockerDesktopLocations();
+    this.launcher = options.launcher ?? detachedLauncher;
   }
 
   private ddev(cwd: string, args: string[], io: Io = {}): Promise<RunResult> {
@@ -130,6 +142,42 @@ export class Ddev {
     const fatal = jsonLines(r.stderr).find((o) => o['level'] === 'fatal')?.['msg'];
     const message = (typeof fatal === 'string' ? fatal : r.stderr).trim().split('\n')[0]!;
     return /docker/i.test(message) ? { version, dockerError: message } : { version, error: message };
+  }
+
+  /**
+   * Open Docker Desktop. Returns once the app is launched; Docker itself takes
+   * a while longer (see waitForDocker). Opening it while it runs is harmless.
+   */
+  async launchDocker(): Promise<void> {
+    const app = await firstExisting(this.dockerLocations);
+    if (!app) {
+      throw new LocalDockError('Couldn’t find Docker Desktop. Start Docker yourself, or install Docker Desktop (docker.com).', 'DOCKER_NOT_FOUND', false);
+    }
+    this.log.info(`Launching ${app}`);
+    try {
+      // A macOS app is a folder; `open` starts it.
+      await (app.endsWith('.app') ? this.launcher('open', [app], this.env) : this.launcher(app, [], this.env));
+    } catch (err) {
+      throw new LocalDockError(`Couldn’t start Docker Desktop: ${(err as Error).message}`, 'DOCKER_START_FAILED', true, { cause: err });
+    }
+  }
+
+  /** Wait until DDEV can reach Docker. Docker Desktop usually needs 20–90 seconds after launch. */
+  async waitForDocker(opts: { signal?: AbortSignal; timeoutMs?: number; intervalMs?: number; onWait?: (seconds: number) => void } = {}): Promise<void> {
+    const { signal, timeoutMs = 180_000, intervalMs = 3000 } = opts;
+    const started = Date.now();
+    const deadline = started + timeoutMs;
+    for (let first = true; ; first = false) {
+      if (!first) opts.onWait?.(Math.round((Date.now() - started) / 1000));
+      throwIfAborted(signal);
+      const check = await this.check();
+      if (check.version === null) throw new LocalDockError('DDEV is not installed. See https://ddev.com/get-started/', 'DOCKER_NOT_FOUND', false);
+      if (!check.dockerError) return;
+      if (Date.now() >= deadline) {
+        throw new LocalDockError(`Docker still isn’t reachable after ${Math.round(timeoutMs / 1000)} seconds: ${check.dockerError}`, 'DOCKER_START_FAILED');
+      }
+      await sleep(intervalMs, signal);
+    }
   }
 
   private useBinary(binary: string): void {
@@ -280,6 +328,17 @@ export function ddevInstallLocations(platform: NodeJS.Platform = process.platfor
   return ['/opt/homebrew/bin/ddev', '/usr/local/bin/ddev', '/home/linuxbrew/.linuxbrew/bin/ddev', '/usr/bin/ddev'];
 }
 
+/** Where Docker Desktop is installed. */
+export function dockerDesktopLocations(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env, home = os.homedir()): string[] {
+  if (platform === 'win32') {
+    const win = windowsDirs(env, home);
+    const exe = ['Docker', 'Docker', 'Docker Desktop.exe'];
+    return [path.win32.join(win.ProgramFiles, ...exe), path.win32.join(win.LOCALAPPDATA, 'Programs', ...exe)];
+  }
+  if (platform === 'darwin') return ['/Applications/Docker.app', path.posix.join(home, 'Applications', 'Docker.app')];
+  return ['/opt/docker-desktop/bin/docker-desktop'];
+}
+
 /**
  * The environment to run DDEV with. Hosts may start us with a trimmed
  * environment (Orca passes plugin workers only PATH, HOME, USERPROFILE, TEMP
@@ -322,4 +381,17 @@ async function firstExisting(paths: readonly string[]): Promise<string | undefin
     }
   }
   return undefined;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener('abort', done, { once: true });
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    }
+  });
 }

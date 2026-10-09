@@ -192,6 +192,10 @@ export class LocalDockController {
       case 'start':
       case 'stop':
         return this.startStop(action.type);
+      case 'start-docker':
+        await this.startDocker();
+        this.notice = { kind: 'success', text: 'Docker is running.' };
+        return this.refreshTracking();
       case 'open':
         return this.open(action.target);
       case 'load-db-groups':
@@ -324,16 +328,24 @@ export class LocalDockController {
     this.setView({ view: 'pulling', host: hostSummary(host), site: siteSummary(site) });
 
     const ctx = await this.context(hostId, project.path, `Pulling ${domain}`, true);
-    const ddev = await this.ddevCheck();
-    const installed = ddev.version !== null && !ddev.dockerError;
+    let ddev = await this.ddevCheck();
+    // Docker has the whole download to come up; the site starts at the end if it made it.
+    const dockerWasDown = Boolean(ddev.dockerError);
+    if (dockerWasDown) await this.deps.ddev.launchDocker().catch((err: Error) => this.logger.warn(err.message));
+    let installed = ddev.version !== null && !ddev.dockerError;
     const result = await pullSite(ctx, { hostId, site, projectDir: project.path, exclude: { includeUploads }, start: installed });
+    if (dockerWasDown) {
+      ddev = await this.ddevCheck();
+      installed = !ddev.dockerError;
+      if (installed) await startSite(ctx, project.path, { importDump: true });
+    }
     await this.rememberHostLabel(host);
     this.discovered = null;
     this.notice = result.failed.length
       ? { kind: 'error', text: `Pulled ${result.fileCount - result.failed.length} of ${result.fileCount} files. ${result.failed.length} failed: ${result.failed.slice(0, 3).map((f) => f.path).join(', ')}…` }
       : { kind: 'success', text: installed ? `Pulled ${domain} and started it with DDEV.` : ddev.version === null
           ? `Pulled ${domain}, files and database. Install DDEV, then Start loads the database locally.`
-          : `Pulled ${domain}, files and database. Start Docker Desktop, then Start loads the database locally.` };
+          : `Pulled ${domain}, files and database. Docker isn’t running yet; Start loads the database locally once it is.` };
     await this.deps.host.notify('LocalDock', `Pulled ${domain}`).catch(() => {});
     await (this.here(project.path) ? this.refreshTracking(result.state) : this.refresh());
   }
@@ -398,12 +410,31 @@ export class LocalDockController {
       throw new LocalDockError('DDEV is not installed. See https://ddev.com/get-started/', 'DOCKER_NOT_FOUND', false);
     }
     if (ddev.dockerError) {
-      throw new LocalDockError('Docker isn’t running. Start Docker Desktop, then try again.', 'DOCKER_NOT_FOUND', false);
+      if (which === 'stop') throw new LocalDockError('Docker isn’t running, so the local site isn’t either.', 'DOCKER_NOT_FOUND', false);
+      await this.startDocker();
     }
     await this.tracked(which === 'start' ? 'Starting DDEV' : 'Stopping DDEV', false, async (ctx, dir) => {
       if (which === 'start') await startSite(ctx, dir);
       else await stopSite(ctx, dir);
       await this.refreshTracking();
+    });
+  }
+
+  /** Open Docker Desktop and wait until DDEV can reach it, as a cancellable job. */
+  private async startDocker(): Promise<void> {
+    const project = await this.requireProject();
+    const title = 'Starting Docker Desktop';
+    this.abort = new AbortController();
+    this.jobHome = { dir: project.path, view: this.view };
+    this.job = { title, message: 'Opening Docker Desktop…', cancellable: true };
+    this.emit();
+    await this.deps.ddev.launchDocker();
+    await this.deps.ddev.waitForDocker({
+      signal: this.abort.signal,
+      onWait: (seconds) => {
+        this.job = { title, message: `Waiting for Docker to start… ${seconds} s`, cancellable: true };
+        this.emit();
+      },
     });
   }
 

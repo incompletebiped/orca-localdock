@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { Ddev, ddevEnv, ddevInstallLocations, normalizeStatus } from '../src/ddev/Ddev.js';
+import { Ddev, ddevEnv, ddevInstallLocations, dockerDesktopLocations, normalizeStatus } from '../src/ddev/Ddev.js';
 import type { CommandRunner, RunResult } from '../src/ddev/runner.js';
 import { localWpConfig, sanitizeHtaccess, uploadsProxyHtaccess } from '../src/ddev/templates.js';
 import { PathMatcher } from '../src/util/glob.js';
@@ -89,6 +89,52 @@ describe('checking DDEV and Docker', () => {
   it('reports not installed only when there is no DDEV at all', async () => {
     const ddev = new Ddev({ run: async () => ({ code: 127, stdout: '', stderr: 'spawn ddev ENOENT' }) }, { locations: [] });
     expect(await ddev.check()).toEqual({ version: null });
+  });
+});
+
+describe('starting Docker Desktop', () => {
+  const up = { code: 0, stdout: JSON.stringify({ raw: { 'DDEV version': 'v1.25.4' } }), stderr: '' };
+  const down = { code: 1, stdout: up.stdout, stderr: JSON.stringify({ level: 'fatal', msg: 'Docker error: failed to connect to the docker API' }) };
+
+  it('knows where Docker Desktop is installed, even with a trimmed environment', () => {
+    expect(dockerDesktopLocations('win32', { SYSTEMDRIVE: 'C:' }, 'C:\\Users\\u')).toEqual([
+      'C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe',
+      'C:\\Users\\u\\AppData\\Local\\Programs\\Docker\\Docker\\Docker Desktop.exe',
+    ]);
+    expect(dockerDesktopLocations('darwin', {}, '/Users/u')).toEqual(['/Applications/Docker.app', '/Users/u/Applications/Docker.app']);
+  });
+
+  it('launches the first install it finds (macOS apps through `open`)', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-docker-'));
+    const exe = path.join(dir, 'Docker Desktop.exe');
+    const app = path.join(dir, 'Docker.app');
+    await fs.writeFile(exe, '');
+    await fs.mkdir(app);
+    const launched: Array<[string, readonly string[]]> = [];
+    const launcher = async (command: string, args: readonly string[]) => void launched.push([command, args]);
+    await new Ddev(fakeRunner().runner, { dockerLocations: [path.join(dir, 'nope.exe'), exe], launcher }).launchDocker();
+    await new Ddev(fakeRunner().runner, { dockerLocations: [app], launcher }).launchDocker();
+    expect(launched).toEqual([[exe, []], ['open', [app]]]);
+    await expect(new Ddev(fakeRunner().runner, { dockerLocations: [path.join(dir, 'nope.exe')], launcher }).launchDocker()).rejects.toThrow(
+      /Couldn’t find Docker Desktop/,
+    );
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('waits until DDEV reaches Docker, and gives up after the timeout or on cancel', async () => {
+    let checks = 0;
+    const waits: number[] = [];
+    const ddev = new Ddev({ run: async () => (++checks < 3 ? down : up) }, { locations: [] });
+    await ddev.waitForDocker({ intervalMs: 1, onWait: (s) => waits.push(s) });
+    expect(checks).toBe(3);
+    expect(waits).toHaveLength(2);
+
+    const never = new Ddev({ run: async () => down }, { locations: [] });
+    await expect(never.waitForDocker({ intervalMs: 1, timeoutMs: 5 })).rejects.toThrow(/still isn’t reachable/);
+    const abort = new AbortController();
+    const waiting = never.waitForDocker({ intervalMs: 10_000, signal: abort.signal });
+    abort.abort();
+    await expect(waiting).rejects.toMatchObject({ code: 'CANCELLED' });
   });
 });
 

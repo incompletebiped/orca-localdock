@@ -39,3 +39,16 @@ export const processRunner: CommandRunner = {
     });
   },
 };
+
+/** Starts a desktop app and returns once it has launched, without waiting for it to exit. */
+export type AppLauncher = (command: string, args: readonly string[], env?: NodeJS.ProcessEnv) => Promise<void>;
+
+export const detachedLauncher: AppLauncher = (command, args, env) =>
+  new Promise((resolve, reject) => {
+    const proc = spawn(command, [...args], { env, detached: true, stdio: 'ignore' });
+    proc.once('error', reject);
+    proc.once('spawn', () => {
+      proc.unref();
+      resolve();
+    });
+  });
