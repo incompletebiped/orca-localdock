@@ -4,11 +4,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { computeChangeSet, summarize } from '../src/sync/changeSet.js';
 import { scanLocal, sha1File } from '../src/sync/localScan.js';
-import { hashRemoteFiles, listRemote, reuseBaselineHashes } from '../src/sync/remoteScan.js';
+import { hashRemoteFiles, listRemoteFiles, reuseBaselineHashes } from '../src/sync/remoteScan.js';
 import { readSiteState, writeSiteState, type SiteState } from '../src/sync/state.js';
 import { PathMatcher } from '../src/util/glob.js';
 import { excludePatterns } from '../src/sync/excludes.js';
-import type { ExecResult, RemoteEntry, RemoteFs, RemoteShell } from '../src/ssh/types.js';
+import type { ExecResult, RemoteShell } from '../src/ssh/types.js';
 
 const map = (o: Record<string, string>) => new Map(Object.entries(o));
 
@@ -64,37 +64,47 @@ describe('scanLocal', () => {
 });
 
 describe('remote scanning', () => {
-  const tree: Record<string, RemoteEntry[]> = {
-    '/home/acct/public_html': [
-      { name: 'index.php', isDirectory: false, isFile: true, isSymlink: false, size: 5, mtime: 100 },
-      { name: 'wp-config.php', isDirectory: false, isFile: true, isSymlink: false, size: 9, mtime: 100 },
-      { name: 'wp-content', isDirectory: true, isFile: false, isSymlink: false, size: 0, mtime: 0 },
-      { name: 'link', isDirectory: false, isFile: false, isSymlink: true, size: 0, mtime: 0 },
-    ],
-    '/home/acct/public_html/wp-content': [
-      { name: 'cache', isDirectory: true, isFile: false, isSymlink: false, size: 0, mtime: 0 },
-      { name: 'x.php', isDirectory: false, isFile: true, isSymlink: false, size: 3, mtime: 200 },
-    ],
-  };
-  const sftp = {
-    readdir: async (d: string) => {
-      if (d.endsWith('/cache')) throw new Error('should be pruned');
-      return tree[d] ?? [];
-    },
-  } as unknown as RemoteFs;
+  const Z = String.fromCharCode(0);
+  // Newlines and shell characters in names must survive the listing.
+  const ODD = 'wp-content/odd\nname $(x).php';
+  const listing = [
+    ['index.php', '5', '100.7531'],
+    ['wp-config.php', '9', '100'],
+    ['wp-content/cache/page.html', '4', '100'],
+    ['wp-content/x.php', '3', '200.2'],
+    [ODD, '1', '300'],
+    ['back\\slash.php', '1', '300'],
+  ]
+    .map((f) => f.join(Z) + Z)
+    .join('');
 
-  it('lists included files and skips excluded dirs and symlinks', async () => {
-    const files = await listRemote(sftp, '/home/acct/public_html/', new PathMatcher(excludePatterns()));
+  it('lists the docroot with one find and keeps only included files', async () => {
+    let command = '';
+    const shell: RemoteShell = {
+      exec: async (cmd, opts): Promise<ExecResult> => {
+        command = cmd;
+        opts!.stdout!.write(Buffer.from(listing));
+        return { code: 0, stdout: '', stderr: '' };
+      },
+    };
+    const files = await listRemoteFiles(shell, '/home/acct/public_html/', new PathMatcher(excludePatterns()));
+    expect(command).toBe(`cd '/home/acct/public_html' && find . -type f -printf '%P\\0%s\\0%T@\\0'`);
     expect(Object.fromEntries(files)).toEqual({
       'index.php': { size: 5, mtime: 100 },
       'wp-content/x.php': { size: 3, mtime: 200 },
+      [ODD]: { size: 1, mtime: 300 },
     });
     const missing = reuseBaselineHashes(files, {
       'index.php': { hash: 'aaa', size: 5, remoteMtime: 100, localMtimeMs: 1 },
       'wp-content/x.php': { hash: 'bbb', size: 3, remoteMtime: 150, localMtimeMs: 1 },
     });
     expect(files.get('index.php')!.hash).toBe('aaa');
-    expect(missing).toEqual(['wp-content/x.php']);
+    expect(missing).toEqual(['wp-content/x.php', ODD]);
+  });
+
+  it('fails loudly when find fails', async () => {
+    const shell: RemoteShell = { exec: async () => ({ code: 1, stdout: '', stderr: 'find: permission denied' }) };
+    await expect(listRemoteFiles(shell, '/home/acct/public_html', new PathMatcher([]))).rejects.toThrow(/permission denied/);
   });
 
   it('hashes remote files with quoted paths and one line per file', async () => {

@@ -9,7 +9,7 @@ Please **don't open a public issue**. Report it privately through [GitHub Securi
 LocalDock acts with the SSH access of the Orca SSH host you choose. If that host logs in as root on a WHM server, LocalDock can reach every account on it. It uses that access only to:
 
 - list cPanel accounts and domains (`whmapi1`, `uapi`)
-- read, write and delete files inside the docroot of the site you pulled
+- read, write and delete files inside the docroot of the site you pulled (listing it with `find`, downloading with `tar -cz` streamed over SSH)
 - dump and import that site's database (`mysqldump`, `mysql`)
 - take a gzipped database backup in the account's `~/.localdock-backups/` before any database push
 - `chown` uploaded files back to the owning cPanel account (root sessions only)
@@ -22,6 +22,7 @@ It installs nothing on the server.
 |---|---|
 | A hostile file name, domain or `wp-config.php` value injecting shell commands | Remote commands quote every argument (`shq`). Account names, domains, database identifiers and hosts are validated. Panel actions can't carry shell text. |
 | Push or delete escaping the site | Every path is normalized and confined to the docroot locally, and to the project folder on this machine. |
+| A tampered download archive | Only regular files LocalDock asked for are unpacked, each through the same path confinement; links, devices and unrequested entries are skipped. |
 | Overwriting someone's live edit | Before a push, the change set is recomputed against the server. Files changed on both sides are refused unless you explicitly choose a side. |
 | A bad database push | A full backup is taken first. If the import or URL rewrite fails, it's restored automatically. One click rolls it back afterwards. |
 | Production secrets on a laptop | Production's `wp-config.php` is never downloaded. Database passwords are read into memory when needed, passed to MySQL in a 0600 option file in a 0700 directory, deleted straight after, and masked in logs. |

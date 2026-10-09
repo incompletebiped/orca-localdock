@@ -19,14 +19,13 @@ import type { Ddev, DdevDescription } from '../ddev/Ddev.js';
 import { DEV_MU_PLUGIN, localWpConfig, sanitizeHtaccess, uploadsProxyHtaccess } from '../ddev/templates.js';
 import type { DiscoveredSite } from '../discovery/discover.js';
 import { excludePatterns, type ExcludeOptions } from '../sync/excludes.js';
-import { listRemote } from '../sync/remoteScan.js';
+import { listRemoteFiles } from '../sync/remoteScan.js';
 import { LOCALDOCK_DIR, readSiteState, writeSiteState, type SiteState } from '../sync/state.js';
-import { mapLimit } from '../util/concurrency.js';
 import { PathMatcher } from '../util/glob.js';
 import { assertSafeRemoteDir } from '../util/remotePath.js';
 import { shq } from '../util/shell.js';
 import type { OperationContext, TransferFailure } from './context.js';
-import { downloadOne, requireState } from './fileSync.js';
+import { downloadFiles, requireState } from './fileSync.js';
 
 /** Entries a freshly created Orca project may already contain. Anything else means the folder isn't empty. */
 /** What a brand-new project may already hold. It still counts as empty, and a reset keeps these. */
@@ -105,10 +104,7 @@ export async function pullSite(ctx: OperationContext, opts: PullSiteOptions): Pr
 
   ctx.progress({ phase: 'files', message: 'Listing server files…' });
   const matcher = new PathMatcher(excludePatterns(opts.exclude));
-  const remote = await listRemote(ctx.sftp, docroot, matcher, {
-    signal: ctx.signal,
-    onProgress: (n) => ctx.progress({ phase: 'files', message: `Listing server files… (${n})` }),
-  });
+  const remote = await listRemoteFiles(ctx.shell, docroot, matcher, { signal: ctx.signal });
 
   const state: SiteState = {
     version: 1,
@@ -122,20 +118,8 @@ export async function pullSite(ctx: OperationContext, opts: PullSiteOptions): Pr
     files: {},
   };
 
-  const rels = [...remote.keys()];
-  let done = 0;
-  const results = await mapLimit(
-    rels,
-    ctx.concurrency,
-    async (rel) => {
-      state.files[rel] = await downloadOne(ctx, opts.projectDir, docroot, rel);
-      ctx.progress({ phase: 'files', message: `Downloading files… (${++done}/${rels.length})`, current: done, total: rels.length });
-    },
-    ctx.signal,
-  );
-  const failed = results
-    .filter((r): r is Extract<typeof r, { ok: false }> => !r.ok)
-    .map((r) => ({ path: r.item, error: (r.error as Error).message ?? String(r.error) }));
+  const { files, failed } = await downloadFiles(ctx, opts.projectDir, docroot, remote);
+  state.files = files;
 
   // The root .htaccess isn't synced (it's environment-specific) but the site needs its rewrite rules locally.
   try {
@@ -156,7 +140,7 @@ export async function pullSite(ctx: OperationContext, opts: PullSiteOptions): Pr
   if (opts.start) {
     await startSite(ctx, opts.projectDir, { importDump: true });
   }
-  return { state: (await readSiteState(opts.projectDir))!, failed, fileCount: rels.length };
+  return { state: (await readSiteState(opts.projectDir))!, failed, fileCount: remote.size };
 }
 
 export function dumpPath(projectDir: string): string {

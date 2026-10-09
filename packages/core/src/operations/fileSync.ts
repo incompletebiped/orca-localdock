@@ -1,12 +1,13 @@
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 import { LocalDockError } from '../errors.js';
 import { computeChangeSet, type ChangeEntry } from '../sync/changeSet.js';
 import { excludePatterns, type ExcludeOptions } from '../sync/excludes.js';
 import { scanLocal, sha1File } from '../sync/localScan.js';
-import { hashRemoteFiles, listRemote, reuseBaselineHashes } from '../sync/remoteScan.js';
-import { readSiteState, writeSiteState, type BaselineEntry, type SiteState } from '../sync/state.js';
+import { downloadArchive, type ArchiveDownload } from '../sync/remoteArchive.js';
+import { hashRemoteFiles, listRemoteFiles, reuseBaselineHashes, type RemoteFile } from '../sync/remoteScan.js';
+import { readSiteState, writeSiteState, type SiteState } from '../sync/state.js';
 import { mapLimit } from '../util/concurrency.js';
+import { formatBytes } from '../util/format.js';
 import { PathMatcher } from '../util/glob.js';
 import { localJoin, normalizeRelPath, remoteDirname, remoteJoin, assertSafeRemoteDir } from '../util/remotePath.js';
 import { assertValid, isValidCpanelUser, shq } from '../util/shell.js';
@@ -42,10 +43,7 @@ export async function computeSiteChanges(
   const local = await scanLocal(siteDir, matcher, state.files, { signal: ctx.signal });
 
   ctx.progress({ phase: 'scan', message: 'Scanning server files…' });
-  const remote = await listRemote(ctx.sftp, state.docroot, matcher, {
-    signal: ctx.signal,
-    onProgress: (n) => ctx.progress({ phase: 'scan', message: `Scanning server files… (${n})` }),
-  });
+  const remote = await listRemoteFiles(ctx.shell, state.docroot, matcher, { signal: ctx.signal });
   const toHash = reuseBaselineHashes(remote, state.files);
   if (toHash.length > 0) {
     ctx.progress({ phase: 'scan', message: `Checking ${toHash.length} changed server file(s)…`, current: 0, total: toHash.length });
@@ -194,21 +192,14 @@ export async function pullFiles(
   const downloads = selected.filter((e) => e.remote === 'added' || e.remote === 'modified');
   const deletes = selected.filter((e) => e.remote === 'deleted');
   const result: SyncResult = { transferred: [], deleted: [], failed: [] };
-  const total = downloads.length + deletes.length;
   let done = 0;
-  const tick = (verb: string) => ctx.progress({ phase: 'files', message: `${verb}… (${++done}/${total})`, current: done, total });
+  const tick = (verb: string) => ctx.progress({ phase: 'files', message: `${verb}… (${++done}/${deletes.length})`, current: done, total: deletes.length });
 
   try {
-    const down = await mapLimit(
-      downloads,
-      ctx.concurrency,
-      async (e) => {
-        state.files[e.path] = await downloadOne(ctx, siteDir, docroot, e.path);
-        result.transferred.push(e.path);
-        tick('Downloading');
-      },
-      ctx.signal,
-    );
+    const down = await downloadFiles(ctx, siteDir, docroot, new Map(downloads.map((e) => [e.path, changes.remote.get(e.path)!])));
+    Object.assign(state.files, down.files);
+    result.transferred.push(...Object.keys(down.files));
+    result.failed.push(...down.failed);
     const del = await mapLimit(
       deletes,
       ctx.concurrency,
@@ -220,7 +211,7 @@ export async function pullFiles(
       },
       ctx.signal,
     );
-    for (const r of [...down, ...del]) {
+    for (const r of del) {
       if (!r.ok) result.failed.push({ path: r.item.path, error: (r.error as Error).message ?? String(r.error) });
     }
   } finally {
@@ -229,14 +220,14 @@ export async function pullFiles(
   return result;
 }
 
-/** Download one file via a temp name, then record its baseline entry. */
-export async function downloadOne(ctx: OperationContext, siteDir: string, docroot: string, rel: string): Promise<BaselineEntry> {
-  const localFile = localJoin(siteDir, rel);
-  const remoteFile = remoteJoin(docroot, rel);
-  const tmp = `${localFile}.localdock-part`;
-  await fs.mkdir(path.dirname(localFile), { recursive: true });
-  await ctx.sftp.download(remoteFile, tmp);
-  await fs.rename(tmp, localFile);
-  const [rst, lst, hash] = await Promise.all([ctx.sftp.stat(remoteFile), fs.stat(localFile), sha1File(localFile)]);
-  return { hash, size: lst.size, remoteMtime: rst.mtime, localMtimeMs: lst.mtimeMs };
+/** Download server files in one archive stream, reporting progress in bytes. */
+export function downloadFiles(ctx: OperationContext, siteDir: string, docroot: string, files: ReadonlyMap<string, RemoteFile>): Promise<ArchiveDownload> {
+  const count = `${files.size} file${files.size === 1 ? '' : 's'}`;
+  ctx.progress({ phase: 'files', message: `Downloading ${count}…` });
+  return downloadArchive(ctx.shell, docroot, siteDir, files, {
+    signal: ctx.signal,
+    onProgress: (bytes, total) =>
+      ctx.progress({ phase: 'files', message: `Downloading ${count}… ${formatBytes(bytes)} of ${formatBytes(total)}`, current: bytes, total }),
+  });
 }
+

@@ -6,6 +6,7 @@ export * from './util/remotePath.js';
 export * from './util/glob.js';
 export * from './util/semver.js';
 export * from './util/concurrency.js';
+export * from './util/format.js';
 
 export * from './ssh/types.js';
 export * from './ssh/SshConnection.js';
@@ -21,6 +22,7 @@ export * from './sync/changeSet.js';
 export * from './sync/excludes.js';
 export * from './sync/localScan.js';
 export * from './sync/remoteScan.js';
+export * from './sync/remoteArchive.js';
 
 export * from './db/sqlDump.js';
 export * from './db/tableGroups.js';

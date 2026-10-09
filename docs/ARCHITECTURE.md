@@ -25,6 +25,8 @@ This package has no Orca or VS Code dependencies.
 
 - `discovery/`: as root, lists cPanel accounts with `whmapi1 listaccts`, then each account's domains with `uapi DomainInfo domains_data`. Detects WordPress from `wp-includes/version.php`. Domains that share a docroot collapse into one site.
 - `sync/`: the sync baseline lives in `.localdock/state.json` and records each file's hash plus its remote and local stat at the last sync. `changeSet.ts` compares the baseline against the local and remote content and classifies each file as **push**, **pull**, **conflict** or **same**. Only files whose stat changed get hashed. Remote files are hashed with `sha1sum` over SSH.
+  - Listing the server is one `find -printf` over SSH (NUL-separated path, size, mtime), not a walk of SFTP directories.
+  - Downloads (a whole pull, or pulling selected server changes) are one `tar -cz` stream of exactly the listed files, unpacked as it arrives (`remoteArchive.ts`). Each file is hashed while it's written, so the baseline costs no extra server round trips. Speed depends on the bytes moved, not the number of files. Uploads still go file by file over SFTP, since they're only the files you changed.
 - `operations/fileSync.ts`: push and pull of selected files. It recomputes the change set first, so a file that changed on the server since the user last looked becomes a conflict instead of being overwritten.
 - `db/`:
   - `mysqldump` and `mysql` stream over SSH. Credentials go in a 0600 option file in the account's home directory, never on a command line.

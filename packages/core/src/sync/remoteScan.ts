@@ -1,5 +1,6 @@
+import { Writable } from 'node:stream';
 import { LocalDockError, throwIfAborted } from '../errors.js';
-import type { RemoteFs, RemoteShell } from '../ssh/types.js';
+import type { RemoteShell } from '../ssh/types.js';
 import type { PathMatcher } from '../util/glob.js';
 import { assertSafeRemoteDir } from '../util/remotePath.js';
 import { shq } from '../util/shell.js';
@@ -13,46 +14,42 @@ export interface RemoteFile {
 }
 
 /**
- * Walk the remote docroot over SFTP, collecting size and mtime for every
- * included regular file. Symlinks are skipped.
+ * List the docroot with a single `find` over SSH: path, size and mtime of every
+ * regular file (symlinks are skipped), NUL-separated so any file name survives.
+ * One round trip instead of one SFTP readdir per directory. Exclusions are
+ * applied here, so they behave exactly like everywhere else.
  */
-export async function listRemote(
-  sftp: RemoteFs,
+export async function listRemoteFiles(
+  shell: RemoteShell,
   docroot: string,
   matcher: PathMatcher,
-  options: { signal?: AbortSignal; onProgress?: (found: number) => void; concurrency?: number } = {},
+  options: { signal?: AbortSignal } = {},
 ): Promise<Map<string, RemoteFile>> {
   const root = assertSafeRemoteDir(docroot);
+  const chunks: Buffer[] = [];
+  const sink = new Writable({
+    write(chunk: Buffer, _enc, done) {
+      chunks.push(chunk);
+      done();
+    },
+  });
+  const res = await shell.exec(`cd ${shq(root)} && find . -type f -printf '%P\\0%s\\0%T@\\0'`, { stdout: sink, signal: options.signal });
+  if (res.code !== 0) {
+    throw new LocalDockError(`Listing server files failed (exit ${res.code}): ${res.stderr.trim() || 'no output'}`, 'REMOTE_COMMAND_FAILED');
+  }
+  return parseFileList(Buffer.concat(chunks).toString('utf-8'), matcher);
+}
+
+/** Parse `find -printf '%P\0%s\0%T@\0'` output into included files. */
+export function parseFileList(output: string, matcher: PathMatcher): Map<string, RemoteFile> {
+  const fields = output.split('\0');
   const files = new Map<string, RemoteFile>();
-  const queue: string[] = [''];
-  const concurrency = options.concurrency ?? 16;
-
-  const worker = async (): Promise<void> => {
-    while (queue.length > 0) {
-      throwIfAborted(options.signal);
-      const relDir = queue.shift()!;
-      let entries;
-      try {
-        entries = await sftp.readdir(relDir ? `${root}/${relDir}` : root);
-      } catch {
-        continue;
-      }
-      for (const e of entries) {
-        const rel = relDir ? `${relDir}/${e.name}` : e.name;
-        if (e.isDirectory) {
-          if (!matcher.excludes(rel, true)) queue.push(rel);
-        } else if (e.isFile && !matcher.excludes(rel)) {
-          files.set(rel, { size: e.size, mtime: e.mtime });
-        }
-      }
-      options.onProgress?.(files.size);
-    }
-  };
-
-  // Run workers until the queue is drained. Workers exit when the queue is
-  // momentarily empty, so loop until nothing is left.
-  while (queue.length > 0) {
-    await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
+  for (let i = 0; i + 2 < fields.length; i += 3) {
+    const rel = fields[i]!;
+    // Names a Windows checkout can't represent the same way (backslashes) are left out.
+    if (!rel || rel.includes('\\') || matcher.excludes(rel)) continue;
+    // SFTP reports whole seconds; keep the same unit so existing baselines still match.
+    files.set(rel, { size: Number(fields[i + 1]), mtime: Math.floor(Number(fields[i + 2])) });
   }
   return files;
 }
