@@ -21,6 +21,7 @@ import type { DiscoveredSite } from '../discovery/discover.js';
 import { excludePatterns, type ExcludeOptions } from '../sync/excludes.js';
 import { listRemoteFiles } from '../sync/remoteScan.js';
 import { LOCALDOCK_DIR, readSiteState, writeSiteState, type SiteState } from '../sync/state.js';
+import { formatBytes, type ByteProgress } from '../util/format.js';
 import { PathMatcher } from '../util/glob.js';
 import { assertSafeRemoteDir } from '../util/remotePath.js';
 import { shq } from '../util/shell.js';
@@ -129,7 +130,7 @@ export async function pullSite(ctx: OperationContext, opts: PullSiteOptions): Pr
   }
 
   ctx.progress({ phase: 'database', message: 'Downloading the database…' });
-  await dumpRemoteDatabase(ctx.shell, ctx.sftp, creds, dumpPath(opts.projectDir), { signal: ctx.signal });
+  await dumpRemoteDatabase(ctx.shell, ctx.sftp, creds, dumpPath(opts.projectDir), { signal: ctx.signal, onProgress: dbProgress(ctx, 'Downloading the database', true) });
   await writeSiteState(opts.projectDir, state);
   await writeLocalFiles(opts.projectDir, state);
 
@@ -141,6 +142,22 @@ export async function pullSite(ctx: OperationContext, opts: PullSiteOptions): Pr
     await startSite(ctx, opts.projectDir, { importDump: true });
   }
   return { state: (await readSiteState(opts.projectDir))!, failed, fileCount: remote.size };
+}
+
+/**
+ * Progress for a database transfer, e.g. "Downloading the database… 21 MB of about 60 MB (85 KB/s)".
+ * A dump's total is an estimate, so the bar stops short of full until the next step starts.
+ */
+function dbProgress(ctx: OperationContext, verb: string, estimated: boolean): ByteProgress {
+  const started = Date.now();
+  return (bytes, total) => {
+    const seconds = (Date.now() - started) / 1000;
+    const rate = seconds >= 1 ? ` (${formatBytes(bytes / seconds)}/s)` : '';
+    const of = total ? ` of ${estimated ? 'about ' : ''}${formatBytes(total)}` : '';
+    // An import has sent everything once bytes reach the total; the database is still loading it.
+    const message = !estimated && total !== undefined && bytes >= total ? `${verb}… almost done` : `${verb}… ${formatBytes(bytes)}${of}${rate}`;
+    ctx.progress({ phase: 'database', message, ...(total ? { current: Math.min(bytes, Math.floor(total * 0.99)), total } : {}) });
+  };
 }
 
 export function dumpPath(projectDir: string): string {
@@ -180,7 +197,7 @@ export async function startSite(ctx: OperationContext, projectDir: string, opts:
   const importDump = opts.importDump ?? state.localUrl === undefined;
   if (importDump) {
     ctx.progress({ phase: 'database', message: 'Importing the database…' });
-    await ctx.ddev.importDb(projectDir, dumpPath(projectDir));
+    await ctx.ddev.importDb(projectDir, dumpPath(projectDir), dbProgress(ctx, 'Importing the database', false));
   }
   const from = importDump ? state.productionUrl : state.localUrl;
   if (from && from !== info.url) {
@@ -274,7 +291,7 @@ export async function pullDatabase(ctx: OperationContext, projectDir: string): P
   const state = await requireState(projectDir);
   const creds = await readRemoteDbCredentials(ctx.sftp, state.docroot);
   ctx.progress({ phase: 'database', message: 'Downloading the live database…' });
-  await dumpRemoteDatabase(ctx.shell, ctx.sftp, creds, dumpPath(projectDir), { signal: ctx.signal });
+  await dumpRemoteDatabase(ctx.shell, ctx.sftp, creds, dumpPath(projectDir), { signal: ctx.signal, onProgress: dbProgress(ctx, 'Downloading the live database', true) });
   await startSite(ctx, projectDir, { importDump: true });
 }
 

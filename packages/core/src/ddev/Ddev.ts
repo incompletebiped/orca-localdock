@@ -1,10 +1,12 @@
 import { createReadStream, createWriteStream } from 'node:fs';
-import { access } from 'node:fs/promises';
+import { access, stat } from 'node:fs/promises';
+import { Transform } from 'node:stream';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { z } from 'zod';
 import { LocalDockError } from '../errors.js';
 import { silentLogger, type Logger } from '../log.js';
+import { byteCounter, type ByteProgress } from '../util/format.js';
 import { assertValid, isValidDbIdentifier, slugify } from '../util/shell.js';
 import { processRunner, type CommandRunner, type RunOptions, type RunResult } from './runner.js';
 
@@ -156,8 +158,17 @@ export class Ddev {
   }
 
   /** Replace the local database with a SQL dump. */
-  async importDb(projectDir: string, sqlFile: string): Promise<void> {
-    await this.must(projectDir, ['import-db', `--file=${sqlFile}`], 'ddev import-db');
+  /** Import a SQL file, streamed on stdin so progress can be counted. */
+  async importDb(projectDir: string, sqlFile: string, onProgress?: ByteProgress): Promise<void> {
+    const count = byteCounter(onProgress, (await stat(sqlFile)).size);
+    const counted = new Transform({
+      transform(chunk: Buffer, _enc, done) {
+        count.add(chunk.length);
+        done(null, chunk);
+      },
+    });
+    await this.must(projectDir, ['import-db'], 'ddev import-db', { stdin: createReadStream(sqlFile).pipe(counted) });
+    count.flush();
   }
 
   /** Dump selected tables (or all) from the local database to a file (mode 0600). */

@@ -330,7 +330,7 @@ export class LocalDockController {
     this.discovered = null;
     this.notice = result.failed.length
       ? { kind: 'error', text: `Pulled ${result.fileCount - result.failed.length} of ${result.fileCount} files. ${result.failed.length} failed: ${result.failed.slice(0, 3).map((f) => f.path).join(', ')}…` }
-      : { kind: 'success', text: installed ? `Pulled ${domain} and started it with DDEV.` : `Pulled ${domain}. Install DDEV to run it locally.` };
+      : { kind: 'success', text: installed ? `Pulled ${domain} and started it with DDEV.` : `Pulled ${domain}, files and database. Install DDEV, then Start loads the database locally.` };
     await this.deps.host.notify('LocalDock', `Pulled ${domain}`).catch(() => {});
     await (this.here(project.path) ? this.refreshTracking(result.state) : this.refresh());
   }

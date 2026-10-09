@@ -1,9 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+import { createGunzip } from 'node:zlib';
 import { LocalDockError } from '../errors.js';
 import { registerSecret } from '../log.js';
 import type { RemoteFs, RemoteShell } from '../ssh/types.js';
 import { assertSafeRemoteDir } from '../util/remotePath.js';
+import { byteCounter, type ByteProgress } from '../util/format.js';
 import { assertValid, isValidDbHost, isValidDbIdentifier, shq } from '../util/shell.js';
 import { parseWpConfig } from '../discovery/wpConfig.js';
 import { parseSearchReplaceOutput, searchReplaceScript, type DbConnection } from './searchReplace.js';
@@ -122,23 +125,47 @@ export async function dumpRemoteDatabase(
   sftp: RemoteFs,
   creds: DbCredentials,
   localFile: string,
-  options: { tables?: readonly string[]; signal?: AbortSignal } = {},
+  options: { tables?: readonly string[]; signal?: AbortSignal; onProgress?: ByteProgress } = {},
 ): Promise<void> {
   const tables = (options.tables ?? []).map((t) => assertValid('table name', t, isValidDbIdentifier));
   await withOptionFile(shell, sftp, creds, async (cnf) => {
-    const out = createWriteStream(localFile, { mode: 0o600 });
-    const done = new Promise<void>((resolve, reject) => {
-      out.on('finish', resolve);
-      out.on('error', reject);
-    });
-    const cmd = ['mysqldump', `--defaults-extra-file=${cnf}`, ...DUMP_FLAGS, creds.name, ...tables].map(shq).join(' ');
-    const res = await shell.exec(cmd, { stdout: out, signal: options.signal });
-    out.end();
-    await done;
-    if (res.code !== 0) {
-      throw new LocalDockError(`mysqldump failed: ${res.stderr.trim() || `exit ${res.code}`}`, 'DB_EXPORT_FAILED');
+    const estimate = options.onProgress ? await estimateDumpSize(shell, cnf, creds.name, tables) : undefined;
+    const dump = ['mysqldump', `--defaults-extra-file=${cnf}`, ...DUMP_FLAGS, creds.name, ...tables].map(shq).join(' ');
+    // Gzipped on the wire (SQL text shrinks several times) and unpacked as it arrives. pipefail keeps
+    // mysqldump's exit status rather than gzip's.
+    const cmd = `bash -o pipefail -c ${shq(`${dump} | gzip -1`)}`;
+    const gunzip = createGunzip();
+    const count = byteCounter(options.onProgress, estimate);
+    gunzip.on('data', (chunk: Buffer) => count.add(chunk.length));
+    const written = pipeline(gunzip, createWriteStream(localFile, { mode: 0o600 }));
+    let code: number;
+    let stderr: string;
+    try {
+      ({ code, stderr } = await shell.exec(cmd, { stdout: gunzip, signal: options.signal }));
+    } catch (err) {
+      gunzip.destroy();
+      await written.catch(() => {});
+      throw err;
     }
+    gunzip.end();
+    const unpacked = await written.then(
+      () => null,
+      (err: Error) => err,
+    );
+    if (code !== 0) throw new LocalDockError(`mysqldump failed: ${stderr.trim() || `exit ${code}`}`, 'DB_EXPORT_FAILED');
+    if (unpacked) throw new LocalDockError(`The database download was incomplete: ${unpacked.message}`, 'DB_EXPORT_FAILED');
+    count.flush(count.bytes);
   });
+}
+
+/** Rough size of a dump: the tables' data length. Only used to show progress, so failures are ignored. */
+async function estimateDumpSize(shell: RemoteShell, cnf: string, database: string, tables: readonly string[]): Promise<number | undefined> {
+  // Table names are validated identifiers, so quoting them in SQL is safe.
+  const only = tables.length ? ` AND table_name IN (${tables.map((t) => `'${t}'`).join(',')})` : '';
+  const sql = `SELECT COALESCE(SUM(data_length), 0) FROM information_schema.tables WHERE table_schema = DATABASE()${only}`;
+  const res = await shell.exec(['mysql', `--defaults-extra-file=${cnf}`, '-N', '-B', '-e', sql, database].map(shq).join(' '));
+  const n = Number(res.stdout.trim());
+  return res.code === 0 && n > 0 ? n : undefined;
 }
 
 /** Import a local SQL file into the remote database by streaming it to `mysql` over SSH. */
