@@ -7,6 +7,13 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+    ignore:
+      # typescript-eslint doesn't support TypeScript 7 yet (lint refuses to run).
+      - dependency-name: typescript
+        versions: ['>=7']
+      # Keep Node's types at the runtime the plugin targets (node22), so code can't use newer APIs by accident.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
   - package-ecosystem: github-actions
     directory: /
     schedule:
