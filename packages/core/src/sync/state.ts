@@ -31,7 +31,7 @@ export const siteStateSchema = z.object({
   lastPushedAt: z.string().optional(),
   /** DDEV's local URL the last time the database was rewritten for it. */
   localUrl: z.string().optional(),
-  files: z.record(baselineEntrySchema),
+  files: z.record(z.string(), baselineEntrySchema),
 });
 export type SiteState = z.infer<typeof siteStateSchema>;
 

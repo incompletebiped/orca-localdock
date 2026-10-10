@@ -12,7 +12,7 @@ import { LOCALDOCK_DIR, type BaselineEntry } from './state.js';
  */
 export const serverSnapshotSchema = z.object({
   checkedAt: z.string(),
-  changed: z.record(z.string().nullable()),
+  changed: z.record(z.string(), z.string().nullable()),
 });
 export type ServerSnapshot = z.infer<typeof serverSnapshotSchema>;
 
