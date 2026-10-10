@@ -70,6 +70,16 @@ export async function detectServerVersions(ctx: OperationContext): Promise<{ php
   return out;
 }
 
+/** The PHP version a site's .htaccess selects, e.g. cPanel's `AddHandler application/x-httpd-ea-php83 .php` → `8.3`. */
+export function phpVersionFromHtaccess(content: string): string | undefined {
+  for (const line of content.split('\n')) {
+    if (line.trim().startsWith('#')) continue;
+    const m = /x-httpd-(?:ea-|alt-)?php(\d)(\d)(?!\d)/i.exec(line);
+    if (m) return `${m[1]}.${m[2]}`;
+  }
+  return undefined;
+}
+
 export interface PullSiteOptions {
   hostId: string;
   site: DiscoveredSite;
@@ -136,7 +146,9 @@ export async function pullSite(ctx: OperationContext, opts: PullSiteOptions): Pr
 
   ctx.progress({ phase: 'ddev', message: 'Configuring DDEV…' });
   const versions = await detectServerVersions(ctx).catch(() => ({}) as { php?: string; database?: string });
-  await ctx.ddev.configure(opts.projectDir, { projectName: opts.site.domain, phpVersion: versions.php, database: versions.database });
+  // The site's own PHP (cPanel MultiPHP sets it per site in .htaccess) wins over the server's command-line default.
+  const sitePhp = await fs.readFile(path.join(opts.projectDir, '.htaccess'), 'utf-8').then(phpVersionFromHtaccess, () => undefined);
+  await ctx.ddev.configure(opts.projectDir, { projectName: opts.site.domain, phpVersion: sitePhp ?? versions.php, database: versions.database });
 
   if (opts.start) {
     await startSite(ctx, opts.projectDir, { importDump: true });

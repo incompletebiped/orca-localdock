@@ -59,6 +59,12 @@ export function devMuPlugin(productionUrl: string): string {
  * LocalDock: local development helpers. Written by LocalDock (local only, never pushed).
  */
 
+// DDEV turns WP_DEBUG on, which prints PHP notices into pages. Output before the headers breaks redirects and
+// the login cookie, and production doesn't show them either. They still reach the log (\`ddev logs\`).
+if ( PHP_SAPI !== 'cli' ) {
+	@ini_set( 'display_errors', '0' );
+}
+
 // Media that wasn't pulled: send the browser to the live site's copy. wp-content/uploads/.htaccess does the
 // same, but it doesn't always reach the web server: Docker can't mount the uploads folder from some drives
 // (e.g. a removable drive on Windows), and nginx ignores .htaccess. Missing files end up here either way.

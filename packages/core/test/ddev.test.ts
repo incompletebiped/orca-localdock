@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { Ddev, ddevEnv, ddevInstallLocations, dockerDesktopLocations, normalizeStatus } from '../src/ddev/Ddev.js';
 import type { CommandRunner, RunResult } from '../src/ddev/runner.js';
 import { devMuPlugin, localWpConfig, sanitizeHtaccess, uploadsProxyHtaccess } from '../src/ddev/templates.js';
+import { phpVersionFromHtaccess } from '../src/operations/site.js';
 import { PathMatcher } from '../src/util/glob.js';
 import { excludePatterns } from '../src/sync/excludes.js';
 
@@ -242,6 +243,16 @@ describe('local templates', () => {
 
   it('proxies missing uploads to production', () => {
     expect(uploadsProxyHtaccess('https://example.com/')).toContain('https://example.com/wp-content/uploads/$1 [R=302,L]');
+  });
+
+  it('reads the site’s PHP version from its .htaccess handler', () => {
+    expect(phpVersionFromHtaccess('# x-httpd-ea-php74\nAddHandler application/x-httpd-ea-php83 .php .php8')).toBe('8.3');
+    expect(phpVersionFromHtaccess('AddHandler application/x-httpd-alt-php81___lsphp .php')).toBe('8.1');
+    expect(phpVersionFromHtaccess('RewriteEngine On')).toBeUndefined();
+  });
+
+  it('hides PHP notices from pages (not from WP-CLI)', () => {
+    expect(devMuPlugin('https://example.com')).toContain(`if ( PHP_SAPI !== 'cli' ) {\n\t@ini_set( 'display_errors', '0' );`);
   });
 
   it('also sends missing media to production from the mu-plugin, for when the .htaccess never reaches the server', () => {
