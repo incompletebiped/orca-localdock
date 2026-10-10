@@ -56,6 +56,9 @@ await build({
   platform: 'node',
   target: 'node22',
   legalComments: 'none',
+  // ssh2's optional native add-ons (sshcrypto, cpu-features) can't be bundled. Where they compiled (Linux CI,
+  // machines with build tools) leave them out: ssh2 loads them in try/catch and falls back to plain JS.
+  external: ['*.node'],
   // Some dependencies are CommonJS and use require() and __dirname (ssh2); give the ESM bundle both.
   banner: {
     js: [
