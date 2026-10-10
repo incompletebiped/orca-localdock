@@ -92,6 +92,30 @@ describe('checking DDEV and Docker', () => {
   });
 });
 
+describe('projects on drives Docker Desktop doesn’t mount', () => {
+  it('mounts the project drive into Docker Desktop’s VM before starting, on Windows only', async () => {
+    const { runner, calls } = fakeRunner();
+    await new Ddev(runner, { binary: 'ddev', platform: 'win32' }).start('D:\\sites\\example');
+    expect(calls.map((c) => c.command)).toEqual([expect.stringMatching(/System32[\\/]wsl\.exe$/i), 'ddev']);
+    expect(calls[0]!.args.slice(0, 8)).toEqual(['-d', 'docker-desktop', '-u', 'root', '--cd', '/', '-e', 'sh']);
+    const script = calls[0]!.args[9]!;
+    expect(script).toContain('mount -t drvfs D: "$p"');
+    expect(script).toContain('/tmp/docker-desktop-root/run/desktop/mnt/host/d /mnt/host/d');
+
+    const linux = fakeRunner();
+    await new Ddev(linux.runner, { binary: 'ddev', platform: 'linux' }).start('/sites/example');
+    expect(linux.calls.map((c) => c.command)).toEqual(['ddev']);
+  });
+
+  it('still starts when the drive can’t be mounted, and leaves network paths alone', async () => {
+    const { runner, calls } = fakeRunner((args) => (args[0] === '-d' ? { code: 1 } : {}));
+    const ddev = new Ddev(runner, { binary: 'ddev', platform: 'win32' });
+    await ddev.start('E:\\sites\\example');
+    expect(calls.map((c) => c.args[0])).toEqual(['-d', 'start']);
+    expect(await ddev.shareProjectDrive('\\\\server\\share\\site')).toBe(true);
+  });
+});
+
 describe('starting Docker Desktop', () => {
   const up = { code: 0, stdout: JSON.stringify({ raw: { 'DDEV version': 'v1.25.4' } }), stderr: '' };
   const down = { code: 1, stdout: up.stdout, stderr: JSON.stringify({ level: 'fatal', msg: 'Docker error: failed to connect to the docker API' }) };

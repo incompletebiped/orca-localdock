@@ -81,6 +81,7 @@ export class Ddev {
   private readonly locations: readonly string[];
   private readonly dockerLocations: readonly string[];
   private readonly launcher: AppLauncher;
+  private readonly platform: NodeJS.Platform;
 
   constructor(
     private readonly runner: CommandRunner = processRunner,
@@ -92,6 +93,7 @@ export class Ddev {
       /** Where to look for the Docker Desktop app. */
       dockerLocations?: readonly string[];
       launcher?: AppLauncher;
+      platform?: NodeJS.Platform;
     } = {},
   ) {
     this.log = (options.logger ?? silentLogger).child('ddev');
@@ -99,6 +101,7 @@ export class Ddev {
     this.locations = options.binary ? [] : (options.locations ?? ddevInstallLocations());
     this.dockerLocations = options.dockerLocations ?? dockerDesktopLocations();
     this.launcher = options.launcher ?? detachedLauncher;
+    this.platform = options.platform ?? process.platform;
   }
 
   private ddev(cwd: string, args: string[], io: Io = {}): Promise<RunResult> {
@@ -204,7 +207,30 @@ export class Ddev {
   }
 
   async start(projectDir: string, signal?: AbortSignal): Promise<void> {
+    if (this.platform === 'win32' && !(await this.shareProjectDrive(projectDir))) {
+      this.log.warn(`Couldn't make ${path.win32.parse(projectDir).root} visible to Docker; folders DDEV mounts from it may look empty`);
+    }
     await this.must(projectDir, ['start', '-y'], 'ddev start', { signal });
+  }
+
+  /**
+   * Docker Desktop on Windows only sees the drives WSL mounted, and WSL skips
+   * removable drives. Folders DDEV bind-mounts from such a drive (uploads,
+   * .ddev, .git) then show up empty in the container. This mounts the
+   * project's drive into Docker Desktop's VM where Docker looks for it. The
+   * mount lasts until Docker Desktop restarts, so it's redone before every
+   * start (a no-op when the drive is already there). Returns false if it
+   * couldn't, e.g. Docker isn't using Docker Desktop's WSL backend.
+   */
+  async shareProjectDrive(projectDir: string): Promise<boolean> {
+    const letter = /^([a-z]):/i.exec(projectDir)?.[1]?.toLowerCase();
+    if (!letter) return true; // A network path: not ours to mount.
+    const targets = [`/tmp/docker-desktop-root/run/desktop/mnt/host/${letter}`, `/mnt/host/${letter}`];
+    const script = `set -e; for p in ${targets.join(' ')}; do mountpoint -q "$p" || { mkdir -p "$p" && mount -t drvfs ${letter.toUpperCase()}: "$p" -o metadata; }; done`;
+    const systemRoot = Object.entries(this.env).find(([k]) => k.toUpperCase() === 'SYSTEMROOT')?.[1] ?? 'C:\\Windows';
+    const wsl = path.win32.join(systemRoot, 'System32', 'wsl.exe');
+    const r = await this.runner.run(wsl, ['-d', 'docker-desktop', '-u', 'root', '--cd', '/', '-e', 'sh', '-c', script], { env: this.env });
+    return r.code === 0;
   }
 
   async stop(projectDir: string): Promise<void> {
