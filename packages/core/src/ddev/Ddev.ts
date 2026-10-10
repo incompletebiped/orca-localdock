@@ -82,6 +82,7 @@ export class Ddev {
   private readonly dockerLocations: readonly string[];
   private readonly launcher: AppLauncher;
   private readonly platform: NodeJS.Platform;
+  private dockerBinary: string | undefined;
 
   constructor(
     private readonly runner: CommandRunner = processRunner,
@@ -181,6 +182,57 @@ export class Ddev {
       }
       await sleep(intervalMs, signal);
     }
+  }
+
+  /** Names of the DDEV projects that are running, any project on this machine. */
+  async runningProjects(): Promise<string[]> {
+    const r = await this.runner.run(this.binary, ['list', '-j'], { cwd: os.homedir(), env: this.env });
+    const list = jsonLines(r.stdout).map((o) => o['raw']).find(Array.isArray) as Array<{ name?: unknown; status?: unknown }> | undefined;
+    return (list ?? []).filter((p) => p.status === 'running' && typeof p.name === 'string').map((p) => p.name as string);
+  }
+
+  /** Stop DDEV's shared services (router, SSH agent). Only call it when no project is running: it stops those too. */
+  async poweroff(): Promise<void> {
+    await this.must(os.homedir(), ['poweroff'], 'ddev poweroff');
+  }
+
+  /** Whether any container is running, DDEV's or anyone else's. */
+  async containersRunning(): Promise<boolean> {
+    const r = await this.docker(['ps', '-q']);
+    return r.code !== 0 || r.stdout.trim() !== '';
+  }
+
+  /** Quit Docker Desktop (`docker desktop stop`). */
+  async quitDocker(): Promise<void> {
+    const r = await this.docker(['desktop', 'stop']);
+    if (r.code !== 0) throw new LocalDockError(`Couldn’t quit Docker Desktop: ${(r.stderr || r.stdout).trim() || `exit ${r.code}`}`, 'DOCKER_STOP_FAILED');
+  }
+
+  /**
+   * Remove DDEV images left by other DDEV versions (their tag starts with another version, e.g. v1.24.2). Images
+   * for the installed version stay, even with no container using them: `ddev delete images` would also drop the
+   * database image of a stopped project. Returns how many were removed.
+   */
+  async removeOldImages(): Promise<number> {
+    const { version } = await this.check();
+    if (!version || !/^v\d+\.\d+\.\d+/.test(version)) return 0;
+    const list = await this.docker(['images', '--filter', 'reference=ddev/*', '--format', '{{.Repository}}:{{.Tag}}']);
+    const old = list.stdout
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((ref) => {
+        const tag = ref.slice(ref.lastIndexOf(':') + 1);
+        return /^v\d+\.\d+\.\d+/.test(tag) && !tag.startsWith(version);
+      });
+    let removed = 0;
+    for (const ref of old) if ((await this.docker(['rmi', ref])).code === 0) removed++;
+    return removed;
+  }
+
+  /** Run the docker CLI: the one inside Docker Desktop if it's there (a trimmed PATH may lack it), else from PATH. */
+  private async docker(args: string[]): Promise<RunResult> {
+    this.dockerBinary ??= (await firstExisting(this.dockerLocations.map(dockerCliFor))) ?? 'docker';
+    return this.runner.run(this.dockerBinary, args, { env: this.env });
   }
 
   private useBinary(binary: string): void {
@@ -363,6 +415,13 @@ export function dockerDesktopLocations(platform: NodeJS.Platform = process.platf
   }
   if (platform === 'darwin') return ['/Applications/Docker.app', path.posix.join(home, 'Applications', 'Docker.app')];
   return ['/opt/docker-desktop/bin/docker-desktop'];
+}
+
+/** The docker CLI that ships inside a Docker Desktop install. */
+function dockerCliFor(app: string): string {
+  if (app.endsWith('.app')) return path.posix.join(app, 'Contents', 'Resources', 'bin', 'docker');
+  if (/\.exe$/i.test(app)) return path.win32.join(path.win32.dirname(app), 'resources', 'bin', 'docker.exe');
+  return path.posix.join(path.posix.dirname(app), 'docker');
 }
 
 /**

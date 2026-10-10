@@ -58,6 +58,12 @@ export interface ControllerDeps {
 
 const HOST_LABELS_KEY = 'hostLabels';
 
+/** The "session" of a local-only job: any use of the server is a bug, so it fails loudly. */
+const NOT_CONNECTED: RemoteSession = new Proxy({} as RemoteSession, {
+  get: () =>
+    new Proxy({}, { get: () => () => Promise.reject(new LocalDockError('This step needs the server, but it ran without connecting.', 'UNKNOWN', false)) }),
+});
+
 function hostSummary(h: SshHostInfo): HostSummary {
   return { id: h.id, label: h.label, detail: `${h.username}@${h.host}${h.port === 22 ? '' : `:${h.port}`}`, connected: h.connected };
 }
@@ -94,6 +100,8 @@ export class LocalDockController {
   /** Bumped by every server check, so a slower local scan started before it can't overwrite its result. */
   private serverChecks = 0;
   private watcher: { dir: string; close: () => void } | null = null;
+  /** Set when the last running site stopped and nothing else uses Docker; cleared once the user answers. */
+  private dockerIdle = false;
   private readonly logger: Logger;
 
   constructor(private readonly deps: ControllerDeps) {
@@ -220,6 +228,13 @@ export class LocalDockController {
         await this.startDocker();
         this.notice = { kind: 'success', text: 'Docker is running.' };
         return this.refreshTracking();
+      case 'quit-docker':
+        return this.quitDocker();
+      case 'keep-docker':
+        this.dockerIdle = false;
+        return this.refreshTracking();
+      case 'free-space':
+        return this.freeSpace();
       case 'open':
         return this.open(action.target);
       case 'load-db-groups':
@@ -312,8 +327,9 @@ export class LocalDockController {
     return entry;
   }
 
-  private async context(hostId: string, dir: string, title: string, cancellable: boolean): Promise<OperationContext> {
-    const { session, asRoot } = await this.session(hostId);
+  /** A job's context. With no host it never connects: for local-only work (DDEV, Docker). */
+  private async context(hostId: string | null, dir: string, title: string, cancellable: boolean): Promise<OperationContext> {
+    const { session, asRoot } = hostId ? await this.session(hostId) : { session: NOT_CONNECTED, asRoot: false };
     this.abort = new AbortController();
     this.jobHome = { dir, view: this.view };
     this.job = { title, message: 'Starting…', cancellable };
@@ -404,6 +420,7 @@ export class LocalDockController {
       changes: prev?.changes ?? null,
       dbGroups: prev?.dbGroups ?? null,
       lastBackup: prev?.lastBackup,
+      dockerIdle: this.dockerIdle,
     });
     this.watch(project.path);
     void this.updateLocalChanges(project.path);
@@ -477,12 +494,17 @@ export class LocalDockController {
     }
   }
 
-  /** Run an engine operation for the tracked site in this project. */
-  private async tracked(title: string, cancellable: boolean, fn: (ctx: OperationContext, dir: string, state: SiteState) => Promise<void>): Promise<void> {
+  /** Run an engine operation for the tracked site in this project (`local`: without connecting to the server). */
+  private async tracked(
+    title: string,
+    cancellable: boolean,
+    fn: (ctx: OperationContext, dir: string, state: SiteState) => Promise<void>,
+    opts: { local?: boolean } = {},
+  ): Promise<void> {
     const project = await this.requireProject();
     const state = await readSiteState(project.path);
     if (!state) throw new LocalDockError('This project has no pulled site.', 'NOT_FOUND', false);
-    const ctx = await this.context(state.hostId, project.path, title, cancellable);
+    const ctx = await this.context(opts.local ? null : state.hostId, project.path, title, cancellable);
     await fn(ctx, project.path, state);
   }
 
@@ -520,11 +542,51 @@ export class LocalDockController {
       if (which === 'stop') throw new LocalDockError('Docker isn’t running, so the local site isn’t either.', 'DOCKER_NOT_FOUND', false);
       await this.startDocker();
     }
+    this.dockerIdle = false;
     await this.tracked(which === 'start' ? 'Starting DDEV' : 'Stopping DDEV', false, async (ctx, dir) => {
       if (which === 'start') await startSite(ctx, dir);
-      else await stopSite(ctx, dir);
+      else {
+        await stopSite(ctx, dir);
+        await this.cleanUpAfterLastSite(ctx);
+      }
       await this.refreshTracking();
-    });
+    }, { local: true });
+  }
+
+  /** Once no site runs, DDEV's shared services aren't needed, and maybe Docker Desktop isn't either. */
+  private async cleanUpAfterLastSite(ctx: OperationContext): Promise<void> {
+    const ddev = this.deps.ddev;
+    try {
+      if ((await ddev.runningProjects()).length > 0) return;
+      ctx.progress({ phase: 'ddev', message: 'Stopping DDEV’s shared services…' });
+      await ddev.poweroff();
+      this.dockerIdle = !(await ddev.containersRunning());
+    } catch (err) {
+      this.logger.warn(`Cleaning up after the last site: ${(err as Error).message}`);
+    }
+  }
+
+  private async quitDocker(): Promise<void> {
+    this.dockerIdle = false;
+    await this.tracked('Quitting Docker Desktop', false, async () => {
+      // Something else may have started since the offer; Docker Desktop isn't only LocalDock's.
+      if (await this.deps.ddev.containersRunning()) {
+        throw new LocalDockError('Containers are running in Docker now, so LocalDock left Docker Desktop open.', 'DOCKER_STOP_FAILED', false);
+      }
+      await this.deps.ddev.quitDocker();
+      this.notice = { kind: 'success', text: 'Docker Desktop quit. Start opens it again.' };
+      await this.refreshTracking();
+    }, { local: true });
+  }
+
+  private async freeSpace(): Promise<void> {
+    await this.tracked('Freeing up space', false, async () => {
+      const removed = await this.deps.ddev.removeOldImages();
+      this.notice = removed
+        ? { kind: 'success', text: `Removed ${removed} old DDEV image${removed === 1 ? '' : 's'}.` }
+        : { kind: 'info', text: 'Nothing to remove: every DDEV image is for the installed DDEV version.' };
+      await this.refreshTracking();
+    }, { local: true });
   }
 
   /** Open Docker Desktop and wait until DDEV can reach it, as a cancellable job. */

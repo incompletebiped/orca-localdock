@@ -109,6 +109,68 @@ describe('LocalDockController', () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-proj-'));
   });
 
+  describe('cleaning up Docker', () => {
+    /** A DDEV/docker double: records commands; `containers` is what `docker ps -q` prints. */
+    function setup(opts: { otherProjectRunning?: boolean; containers?: string; images?: string[] } = {}) {
+      const calls: string[] = [];
+      let images = opts.images ?? ['ddev/ddev-webserver:v1.25.4'];
+      const runner: CommandRunner = {
+        run: async (cmd, args) => {
+          calls.push([path.basename(cmd), ...args].join(' '));
+          if (args[0] === 'version') return { code: 0, stdout: JSON.stringify({ raw: { 'DDEV version': 'v1.25.4' } }), stderr: '' };
+          if (args[0] === 'list') return { code: 0, stdout: JSON.stringify({ raw: opts.otherProjectRunning ? [{ name: 'other', status: 'running' }] : [] }), stderr: '' };
+          if (args[0] === 'ps') return { code: 0, stdout: opts.containers ?? '', stderr: '' };
+          if (args[0] === 'images') return { code: 0, stdout: images.join('\n'), stderr: '' };
+          if (args[0] === 'rmi') images = images.filter((i) => i !== args[1]);
+          return { code: 0, stdout: '', stderr: '' };
+        },
+      };
+      let sessions = 0;
+      host.openSession = async () => (sessions++, fakeServerSession());
+      host.project = { path: dir, name: 'p' };
+      const c = new LocalDockController({ host, ddev: new Ddev(runner, { locations: [], dockerLocations: [] }), publish: () => {}, watchFiles: false });
+      return { c, calls, sessions: () => sessions };
+    }
+    const tracked = () =>
+      writeSiteState(dir, {
+        version: 1, hostId: 'h1', account: 'exampleco', domain: 'example.com', docroot: '/home/exampleco/public_html',
+        productionUrl: 'https://example.com', tablePrefix: 'wp_', pulledAt: new Date().toISOString(), files: {},
+      });
+
+    it('stops DDEV’s shared services after the last site, offers to quit Docker, and never connects', async () => {
+      await tracked();
+      const { c, calls, sessions } = setup();
+      const s = await c.dispatch({ type: 'stop' });
+      expect(calls).toContain('ddev poweroff');
+      expect(s).toMatchObject({ view: 'tracking', dockerIdle: true });
+      expect((await c.dispatch({ type: 'quit-docker' })).notice?.text).toMatch(/Docker Desktop quit/);
+      expect(calls).toContain('docker desktop stop');
+      expect(sessions()).toBe(0);
+    });
+
+    it('leaves the shared services and Docker alone while something else runs', async () => {
+      await tracked();
+      const busy = setup({ otherProjectRunning: true });
+      expect(await busy.c.dispatch({ type: 'stop' })).toMatchObject({ dockerIdle: false });
+      expect(busy.calls).not.toContain('ddev poweroff');
+
+      const other = setup({ containers: 'abc123' });
+      expect(await other.c.dispatch({ type: 'stop' })).toMatchObject({ dockerIdle: false });
+      expect((await other.c.dispatch({ type: 'quit-docker' })).notice?.text).toMatch(/left Docker Desktop open/);
+      expect(other.calls).not.toContain('docker desktop stop');
+    });
+
+    it('frees space by removing images of older DDEV versions only', async () => {
+      await tracked();
+      // Only images for another DDEV version go; the installed version's stay even if no container uses them.
+      const images = ['ddev/ddev-webserver:v1.24.2', 'ddev/ddev-dbserver-mariadb-11.4:v1.24.2-site-built', 'ddev/ddev-dbserver-mariadb-11.4:v1.25.4', 'ddev/ddev-utilities:latest'];
+      const old = setup({ images });
+      expect((await old.c.dispatch({ type: 'free-space' })).notice?.text).toBe('Removed 2 old DDEV images.');
+      expect(old.calls.filter((c) => c.startsWith('docker rmi'))).toEqual(['docker rmi ddev/ddev-webserver:v1.24.2', 'docker rmi ddev/ddev-dbserver-mariadb-11.4:v1.24.2-site-built']);
+      expect((await setup({ images: ['ddev/ddev-dbserver-mariadb-11.4:v1.25.4'] }).c.dispatch({ type: 'free-space' })).notice?.text).toMatch(/Nothing to remove/);
+    });
+  });
+
   it('picks up local edits as they happen', async () => {
     await fs.writeFile(path.join(dir, 'style.css'), 'body{}');
     const st = await fs.stat(path.join(dir, 'style.css'));

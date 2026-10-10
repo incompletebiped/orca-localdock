@@ -199,7 +199,10 @@ function renderTracking(state: Extract<PanelState, { view: 'tracking' }>, ui: Ui
           ${button('WP Admin', { type: 'open', target: 'admin' }, { disabled: !running })}
           ${button('Mailpit', { type: 'open', target: 'mailpit' }, { disabled: !running })}
           ${button('Live site', { type: 'open', target: 'live' })}
-        </div>`;
+        </div>
+        ${state.dockerIdle && !running
+          ? `<div class="notice notice-info"><span>No local sites are running. Quit Docker Desktop to free its memory? Start opens it again.</span>${button('Quit Docker Desktop', { type: 'quit-docker' }, { disabled: busy })}${button('Keep it', { type: 'keep-docker' }, { disabled: busy })}</div>`
+          : ''}`;
 
   const rows = changes?.rows ?? [];
   const push = rows.filter((r) => r.direction === 'push');
@@ -229,7 +232,8 @@ function renderTracking(state: Extract<PanelState, { view: 'tracking' }>, ui: Ui
     ${ddevLine}
     <div class="toolbar">${button('⟳ Check for changes', { type: 'scan-changes' }, { primary: true, disabled: busy })}<span class="grow"></span><span class="muted small">${changes ? (changes.serverCheckedAt ? `server checked ${esc(timeAgo(changes.serverCheckedAt))}` : 'server not checked yet') : ''}</span></div>
     ${changeSections}
-    ${renderDatabase(state.dbGroups, state.lastBackup, ui, busy)}`;
+    ${renderDatabase(state.dbGroups, state.lastBackup, ui, busy)}
+    <p class="muted small pad maintenance">${button('Free up space', { type: 'free-space' }, { disabled: busy, title: 'Remove DDEV images left by older DDEV versions' })}</p>`;
 }
 
 function renderDatabase(groups: TableGroupOption[] | null, lastBackup: string | undefined, ui: UiState, busy: boolean): string {

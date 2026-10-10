@@ -104,6 +104,8 @@ export type PanelView =
       changes: { rows: ChangeRow[]; serverCheckedAt: string | null } | null;
       dbGroups: TableGroupOption[] | null;
       lastBackup?: string;
+      /** No DDEV site and no other container is running, so Docker Desktop could be quit. */
+      dockerIdle?: boolean;
     }
   | { view: 'error'; message: string };
 
