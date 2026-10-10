@@ -76,6 +76,8 @@ export class LocalDockController {
   private project: ProjectInfo | null = null;
   /** The project a running job works in, and the view it showed, so switching projects mid-job keeps them apart. */
   private jobHome: { dir: string; view: PanelView } | null = null;
+  /** Empty projects the user asked to use LocalDock in. Others aren't touched (no SSH host listing either). */
+  private readonly setUpDirs = new Set<string>();
   private readonly logger: Logger;
 
   constructor(private readonly deps: ControllerDeps) {
@@ -174,6 +176,12 @@ export class LocalDockController {
     switch (action.type) {
       case 'refresh':
         return this.refresh();
+      case 'set-up': {
+        const project = await this.requireEmptyProject();
+        if (!project) return;
+        this.setUpDirs.add(project.path);
+        return this.showHosts();
+      }
       case 'connect-host':
         await this.deps.host.connectSshHost(action.hostId);
         return this.showHosts();
@@ -226,7 +234,9 @@ export class LocalDockController {
     if (this.job && this.jobHome && this.here(this.jobHome.dir)) return this.setView(this.jobHome.view);
     const state = await readSiteState(this.project.path);
     if (state) return this.refreshTracking(state);
-    if (!(await this.requireEmptyProject())) return;
+    const project = await this.requireEmptyProject();
+    if (!project) return;
+    if (!this.setUpDirs.has(project.path)) return this.setView({ view: 'set-up', projectName: path.basename(project.path) });
     if (this.discovered) {
       const host = (await this.deps.host.listSshHosts()).find((h) => h.id === this.discovered!.hostId);
       if (host) {
@@ -251,7 +261,9 @@ export class LocalDockController {
   }
 
   private async showHosts(): Promise<void> {
-    if (!(await this.requireEmptyProject())) return;
+    const project = await this.requireEmptyProject();
+    if (!project) return;
+    if (!this.setUpDirs.has(project.path)) return this.setView({ view: 'set-up', projectName: path.basename(project.path) });
     const hosts = await this.deps.host.listSshHosts();
     this.setView(hosts.length === 0 ? { view: 'no-hosts' } : { view: 'choose-host', hosts: hosts.map(hostSummary) });
   }
@@ -304,6 +316,7 @@ export class LocalDockController {
   private async scanSites(hostId: string): Promise<void> {
     const project = await this.requireEmptyProject();
     if (!project) return;
+    this.setUpDirs.add(project.path);
     const host = await this.requireHost(hostId);
     this.setView({ view: 'scanning', host: hostSummary(host) });
     const { session, username } = await this.session(hostId);

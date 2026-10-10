@@ -5,7 +5,7 @@
 
 **Local WP, but for cPanel, inside [Orca](https://github.com/stablyai/orca).** LocalDock is an Orca plugin that adds a **LocalDock** tab to the right sidebar, next to Source Control:
 
-1. **Create a new, empty project** in Orca and open the LocalDock tab.
+1. **Create a new, empty project** in Orca, open the LocalDock tab, and click **Use LocalDock in this project**. LocalDock leaves projects you don’t set up alone.
 2. **Connect to a server.** LocalDock uses the SSH hosts you've already added in Orca (Settings → SSH). Add one that points at a cPanel server: log in as `root` to see every account on a WHM server, or as a cPanel account user to see that account's sites. If no host is connected, the tab tells you what to do.
 3. **Pick a WordPress site.** LocalDock scans the server (via cPanel's own `whmapi1`/`uapi`) and lists every WordPress install it finds.
 4. **Pull it.** The site's files and database come down into the project, and **[DDEV](https://ddev.com)** runs it locally, with the same PHP and database versions as the server.

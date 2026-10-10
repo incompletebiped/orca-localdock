@@ -78,6 +78,12 @@ function renderView(state: PanelState, ui: UiState): string {
         `LocalDock pulls a WordPress site into a new, empty project, so “${state.projectName}” can’t take one. Create an empty project in Orca, open it, then check again.`,
         button('Check again', { type: 'refresh' }, { primary: true }),
       );
+    case 'set-up':
+      return empty(
+        'Use LocalDock here?',
+        `“${state.projectName}” is empty, so LocalDock can pull a WordPress site from a cPanel server into it. LocalDock stays out of projects you don’t set up.`,
+        button('Use LocalDock in this project', { type: 'set-up' }, { primary: true }),
+      );
     case 'no-hosts':
       return empty(
         'Connect a cPanel server',

@@ -117,7 +117,7 @@ describe('LocalDockController', () => {
     host.project = { path: dir, name: 'main' };
     host.hosts = [{ id: 'h1', label: 'Example server', host: 'server.example.com', port: 22, username: 'root', connected: true }];
     await fs.mkdir(path.join(dir, '.git'));
-    expect((await ctl.dispatch({ type: 'refresh' })).view).toBe('choose-host');
+    expect((await ctl.dispatch({ type: 'set-up' })).view).toBe('choose-host');
 
     await fs.writeFile(path.join(dir, 'package.json'), '{}');
     expect(await ctl.dispatch({ type: 'refresh' })).toMatchObject({ view: 'project-not-empty', projectName: path.basename(dir) });
@@ -171,15 +171,29 @@ describe('LocalDockController', () => {
     expect(ctl.state().job).toBeNull();
   });
 
-  it('asks for an SSH host when Orca has none', async () => {
+  it('leaves an empty project alone until the user sets it up', async () => {
     host.project = { path: dir, name: 'p' };
+    let listed = 0;
+    const list = host.listSshHosts.bind(host);
+    host.listSshHosts = async () => (listed++, list());
+    expect(await ctl.dispatch({ type: 'refresh' })).toMatchObject({ view: 'set-up', projectName: path.basename(dir) });
+    expect(await ctl.dispatch({ type: 'back-to-hosts' })).toMatchObject({ view: 'set-up' });
+    expect(listed).toBe(0);
+    expect((await ctl.dispatch({ type: 'set-up' })).view).toBe('no-hosts');
     expect((await ctl.dispatch({ type: 'refresh' })).view).toBe('no-hosts');
+  });
+
+  it('refuses to set up a project that already has files', async () => {
+    host.project = { path: dir, name: 'p' };
+    await fs.writeFile(path.join(dir, 'index.php'), '');
+    expect((await ctl.dispatch({ type: 'set-up' })).view).toBe('project-not-empty');
   });
 
   it('lists hosts, connects, and scans for WordPress sites', async () => {
     host.project = { path: dir, name: 'p' };
     host.hosts = [{ id: 'h1', label: 'Example server', host: 'server.example.com', port: 22, username: 'root', connected: false }];
-    const s1 = await ctl.dispatch({ type: 'refresh' });
+    expect((await ctl.dispatch({ type: 'refresh' })).view).toBe('set-up');
+    const s1 = await ctl.dispatch({ type: 'set-up' });
     expect(s1).toMatchObject({ view: 'choose-host', hosts: [{ id: 'h1', detail: 'root@server.example.com', connected: false }] });
 
     expect(await ctl.dispatch({ type: 'connect-host', hostId: 'h1' })).toMatchObject({ view: 'choose-host', hosts: [{ connected: true }] });

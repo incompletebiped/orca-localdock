@@ -6,6 +6,7 @@ const tableGroup = z.enum(['content', 'config', 'users', 'comments', 'commerce',
 
 export const panelActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('refresh') }),
+  z.object({ type: z.literal('set-up') }),
   z.object({ type: z.literal('connect-host'), hostId: z.string().min(1).max(256) }),
   z.object({ type: z.literal('scan-sites'), hostId: z.string().min(1).max(256) }),
   z.object({ type: z.literal('back-to-hosts') }),

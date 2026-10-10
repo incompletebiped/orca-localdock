@@ -40,7 +40,7 @@ This package has no Orca or VS Code dependencies.
 - `orca-plugin.json`: the manifest. It declares one panel, the commands and the capabilities.
 - `src/worker/main.ts`: `activate(orca)`. It registers `localdock.state` and `localdock.dispatch` (the panel's two entry points) plus command-palette shortcuts.
 - `src/worker/controller.ts`: the state machine:
-  `no-project → no-hosts | choose-host → scanning → site-list → pulling → tracking`.
+  `no-project | project-not-empty | set-up → no-hosts | choose-host → scanning → site-list → pulling → tracking`. An empty project stays at `set-up` until the user opts in.
   In `tracking`, the panel looks like Source Control and has DDEV controls. Panel actions are validated with zod (`shared/actionSchema.ts`). A pull only accepts sites the worker discovered itself.
 - `src/worker/orca/`: `OrcaHost` is the interface to everything Orca provides. `PluginOrcaHost` implements it with Orca's Host API v0 and throws `OrcaApiPendingError` for the gaps.
 - `src/panel/`: the UI. `render.ts` is a pure function from state to HTML, and every string from the server is escaped. Confirmations happen inline, because the sandbox blocks `confirm()`. `bridge.ts` is the panel's side of the messaging (gap 1).
