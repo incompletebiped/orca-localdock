@@ -45,7 +45,7 @@ export const FIXTURES: Record<string, PanelState> = {
     },
     ddev: { status: 'running', url: 'https://example-com.ddev.site', mailpitUrl: 'https://example-com.ddev.site:8026' },
     changes: {
-      scannedAt: new Date(Date.now() - 60_000).toISOString(),
+      serverCheckedAt: new Date(Date.now() - 60_000).toISOString(),
       rows: [
         { path: 'wp-content/themes/example-child/style.css', local: 'modified', remote: 'unchanged', direction: 'push' },
         { path: 'wp-content/themes/example-child/functions.php', local: 'modified', remote: 'unchanged', direction: 'push' },
@@ -85,7 +85,7 @@ export const FIXTURES: Record<string, PanelState> = {
     view: 'tracking',
     site: { domain: 'example.org', productionUrl: 'https://example.org', account: 'demoacct', hostId: 'h1', hostLabel: 'Example cPanel server', pulledAt: new Date().toISOString() },
     ddev: { status: 'not-installed' },
-    changes: { scannedAt: new Date().toISOString(), rows: [] },
+    changes: { serverCheckedAt: new Date().toISOString(), rows: [] },
     dbGroups: null,
   },
 };

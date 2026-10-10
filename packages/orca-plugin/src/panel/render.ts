@@ -220,14 +220,14 @@ function renderTracking(state: Extract<PanelState, { view: 'tracking' }>, ui: Ui
           button('Keep local (push)', { type: 'push-files', paths: selectedOf(conflicts), allowConflicts: true }, { danger: true, disabled: busy || selectedOf(conflicts).length === 0 }) +
           button('Take server (pull)', { type: 'pull-files', paths: selectedOf(conflicts), allowConflicts: true }, { danger: true, disabled: busy || selectedOf(conflicts).length === 0 })),
       ].join('')
-    : `<p class="muted small pad">Check for changes to compare this project with the live site.</p>`;
+    : `<p class="muted small pad">Looking for local changes…</p>`;
 
   return `<header class="site">
       <h2>${esc(site.domain)}</h2>
       <p class="muted small">${esc(site.hostLabel)} · ${esc(site.account)} · pulled ${esc(timeAgo(site.pulledAt))}${site.lastPushedAt ? ` · pushed ${esc(timeAgo(site.lastPushedAt))}` : ''}</p>
     </header>
     ${ddevLine}
-    <div class="toolbar">${button('⟳ Check for changes', { type: 'scan-changes' }, { primary: true, disabled: busy })}<span class="grow"></span><span class="muted small">${changes ? `checked ${esc(timeAgo(changes.scannedAt))}` : ''}</span></div>
+    <div class="toolbar">${button('⟳ Check for changes', { type: 'scan-changes' }, { primary: true, disabled: busy })}<span class="grow"></span><span class="muted small">${changes ? (changes.serverCheckedAt ? `server checked ${esc(timeAgo(changes.serverCheckedAt))}` : 'server not checked yet') : ''}</span></div>
     ${changeSections}
     ${renderDatabase(state.dbGroups, state.lastBackup, ui, busy)}`;
 }

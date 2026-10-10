@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { Ddev, writeSiteState, type CommandRunner, type ExecResult, type RemoteFs, type RemoteShell } from '@localdock/core';
+import { Ddev, sha1File, writeSiteState, type CommandRunner, type ExecResult, type RemoteFs, type RemoteShell } from '@localdock/core';
 import { LocalDockController } from '../src/worker/controller.js';
 import { OrcaApiPendingError } from '../src/shared/gaps.js';
 import type { OrcaHost, ProjectInfo, RemoteSession, SshHostInfo } from '../src/worker/orca/host.js';
@@ -105,8 +105,52 @@ describe('LocalDockController', () => {
   beforeEach(async () => {
     host = new FakeHost();
     published = [];
-    ctl = new LocalDockController({ host, ddev: new Ddev(noDdev), publish: (s) => published.push(s) });
+    ctl = new LocalDockController({ host, ddev: new Ddev(noDdev), publish: (s) => published.push(s), watchFiles: false });
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-proj-'));
+  });
+
+  it('picks up local edits as they happen', async () => {
+    await fs.writeFile(path.join(dir, 'style.css'), 'body{}');
+    const st = await fs.stat(path.join(dir, 'style.css'));
+    await writeSiteState(dir, {
+      version: 1, hostId: 'h1', account: 'exampleco', domain: 'example.com', docroot: '/home/exampleco/public_html',
+      productionUrl: 'https://example.com', tablePrefix: 'wp_', pulledAt: new Date().toISOString(),
+      files: { 'style.css': { hash: await sha1File(path.join(dir, 'style.css')), size: st.size, remoteMtime: 0, localMtimeMs: st.mtimeMs } },
+    });
+    const live = new LocalDockController({ host, ddev: new Ddev(noDdev), publish: () => {} });
+    host.project = { path: dir, name: 'p' };
+    await live.dispatch({ type: 'refresh' });
+    await vi.waitFor(() => expect(live.state()).toMatchObject({ changes: { rows: [] } }));
+    await fs.writeFile(path.join(dir, 'style.css'), 'body{color:red}');
+    await fs.writeFile(path.join(dir, 'new.php'), '<?php');
+    await vi.waitFor(() => expect(live.state()).toMatchObject({ changes: { rows: [{ path: 'new.php' }, { path: 'style.css' }] } }), { timeout: 8000 });
+    live.dispose();
+  });
+
+  it('keeps a live list of local changes without connecting, and keeps it across project switches', async () => {
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-other-'));
+    await fs.writeFile(path.join(other, 'index.php'), '');
+    await fs.writeFile(path.join(dir, 'style.css'), 'body{}');
+    const st = await fs.stat(path.join(dir, 'style.css'));
+    await writeSiteState(dir, {
+      version: 1, hostId: 'h1', account: 'exampleco', domain: 'example.com', docroot: '/home/exampleco/public_html',
+      productionUrl: 'https://example.com', tablePrefix: 'wp_', pulledAt: new Date().toISOString(),
+      files: { 'style.css': { hash: await sha1File(path.join(dir, 'style.css')), size: st.size, remoteMtime: 0, localMtimeMs: st.mtimeMs } },
+    });
+    let sessions = 0;
+    host.openSession = async () => (sessions++, fakeServerSession());
+    host.project = { path: dir, name: 'p' };
+    await fs.writeFile(path.join(dir, 'style.css'), 'body{color:red}');
+
+    await ctl.dispatch({ type: 'refresh' });
+    await vi.waitFor(() => expect(ctl.state()).toMatchObject({ changes: { rows: [{ path: 'style.css', direction: 'push' }], serverCheckedAt: null } }));
+
+    host.project = { path: other, name: 'p' };
+    expect((await ctl.dispatch({ type: 'refresh' })).view).toBe('project-not-empty');
+    host.project = { path: dir, name: 'p' };
+    await ctl.dispatch({ type: 'refresh' });
+    await vi.waitFor(() => expect(ctl.state()).toMatchObject({ changes: { rows: [{ path: 'style.css' }] } }));
+    expect(sessions).toBe(0);
   });
 
   it('asks for a project when none is open', async () => {

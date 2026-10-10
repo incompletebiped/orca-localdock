@@ -34,45 +34,80 @@ export async function scanLocal(
   baseline: Readonly<Record<string, BaselineEntry>>,
   options: { signal?: AbortSignal; onProgress?: (scanned: number) => void } = {},
 ): Promise<Map<string, LocalFile>> {
-  const found: Array<{ rel: string; size: number; mtimeMs: number }> = [];
+  const result = new Map<string, LocalFile>();
+  await updateLocal(siteDir, matcher, baseline, await listFiles(siteDir, '', matcher, options.signal), result, options);
+  return result;
+}
 
-  const walk = async (dir: string, relDir: string): Promise<void> => {
-    throwIfAborted(options.signal);
+/** Included files under a folder of the site (site-relative paths), walking subfolders in parallel. */
+async function listFiles(siteDir: string, relDir: string, matcher: PathMatcher, signal?: AbortSignal): Promise<string[]> {
+  const found: string[] = [];
+  const walk = async (rel: string): Promise<void> => {
+    throwIfAborted(signal);
     let entries;
     try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
+      entries = await fs.readdir(path.join(siteDir, ...rel.split('/').filter(Boolean)), { withFileTypes: true });
     } catch {
       return;
     }
+    const subdirs: Array<Promise<void>> = [];
     for (const e of entries) {
-      const rel = relDir ? `${relDir}/${e.name}` : e.name;
+      const child = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) {
-        if (!matcher.excludes(rel, true)) {
-          await walk(path.join(dir, e.name), rel);
-        }
-      } else if (e.isFile() && !matcher.excludes(rel)) {
-        const st = await fs.stat(path.join(dir, e.name));
-        found.push({ rel, size: st.size, mtimeMs: st.mtimeMs });
+        if (!matcher.excludes(child, true)) subdirs.push(walk(child));
+      } else if (e.isFile() && !matcher.excludes(child)) {
+        found.push(child);
       }
     }
+    await Promise.all(subdirs);
   };
-  await walk(siteDir, '');
+  await walk(relDir);
+  return found;
+}
 
-  const result = new Map<string, LocalFile>();
+/**
+ * Re-check some paths of an earlier scan (files or folders that changed),
+ * updating `local` in place: changed files are re-hashed, removed ones dropped.
+ */
+export async function updateLocal(
+  siteDir: string,
+  matcher: PathMatcher,
+  baseline: Readonly<Record<string, BaselineEntry>>,
+  paths: readonly string[],
+  local: Map<string, LocalFile>,
+  options: { signal?: AbortSignal; onProgress?: (scanned: number) => void } = {},
+): Promise<void> {
   let done = 0;
+  const more: string[] = [];
   await mapLimit(
-    found,
-    16,
-    async (f) => {
-      const base = baseline[f.rel];
+    [...new Set(paths)],
+    32,
+    async (rel) => {
+      const abs = path.join(siteDir, ...rel.split('/'));
+      const st = await fs.lstat(abs).catch(() => null);
+      if (st?.isDirectory()) {
+        // A folder appeared or was renamed: check everything under it, and anything it used to hold.
+        if (!matcher.excludes(rel, true)) {
+          for (const k of local.keys()) if (k.startsWith(`${rel}/`)) more.push(k);
+          more.push(...(await listFiles(siteDir, rel, matcher, options.signal)));
+        }
+        return;
+      }
+      if (!st?.isFile() || matcher.excludes(rel)) {
+        local.delete(rel);
+        for (const k of local.keys()) if (k.startsWith(`${rel}/`)) more.push(k); // a removed folder
+        return;
+      }
+      const base = baseline[rel];
+      const prev = local.get(rel);
       const hash =
-        base && base.size === f.size && base.localMtimeMs === f.mtimeMs
-          ? base.hash
-          : await sha1File(path.join(siteDir, ...f.rel.split('/')));
-      result.set(f.rel, { hash, size: f.size, mtimeMs: f.mtimeMs });
+        base && base.size === st.size && base.localMtimeMs === st.mtimeMs ? base.hash
+        : prev && prev.size === st.size && prev.mtimeMs === st.mtimeMs ? prev.hash
+        : await sha1File(abs);
+      local.set(rel, { hash, size: st.size, mtimeMs: st.mtimeMs });
       options.onProgress?.(++done);
     },
     options.signal,
   );
-  return result;
+  if (more.length > 0) await updateLocal(siteDir, matcher, baseline, more, local, options);
 }

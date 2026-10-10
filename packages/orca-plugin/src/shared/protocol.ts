@@ -100,7 +100,8 @@ export type PanelView =
       view: 'tracking';
       site: TrackedSite;
       ddev: DdevInfo;
-      changes: { rows: ChangeRow[]; scannedAt: string } | null;
+      /** Local changes are always current; server changes are as of the last check (null: never checked). */
+      changes: { rows: ChangeRow[]; serverCheckedAt: string | null } | null;
       dbGroups: TableGroupOption[] | null;
       lastBackup?: string;
     }

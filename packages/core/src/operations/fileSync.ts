@@ -2,9 +2,10 @@ import * as fs from 'node:fs/promises';
 import { LocalDockError } from '../errors.js';
 import { computeChangeSet, type ChangeEntry } from '../sync/changeSet.js';
 import { excludePatterns, type ExcludeOptions } from '../sync/excludes.js';
-import { scanLocal, sha1File } from '../sync/localScan.js';
+import { scanLocal, sha1File, updateLocal, type LocalFile } from '../sync/localScan.js';
 import { downloadArchive, type ArchiveDownload } from '../sync/remoteArchive.js';
 import { hashRemoteFiles, listRemoteFiles, reuseBaselineHashes, type RemoteFile } from '../sync/remoteScan.js';
+import { forgetServerDifferences, readServerSnapshot, serverDifferences, serverHashes, writeServerSnapshot } from '../sync/serverSnapshot.js';
 import { readSiteState, writeSiteState, type SiteState } from '../sync/state.js';
 import { mapLimit } from '../util/concurrency.js';
 import { formatBytes } from '../util/format.js';
@@ -54,12 +55,47 @@ export async function computeSiteChanges(
     for (const [rel, h] of hashes) remote.get(rel)!.hash = h;
   }
 
+  const remoteHashes = new Map([...remote].filter(([, f]) => f.hash !== undefined).map(([p, f]) => [p, f.hash!]));
   const entries = computeChangeSet(
     new Map(Object.entries(state.files).map(([p, e]) => [p, e.hash])),
     new Map([...local].map(([p, f]) => [p, f.hash])),
-    new Map([...remote].filter(([, f]) => f.hash !== undefined).map(([p, f]) => [p, f.hash!])),
+    remoteHashes,
   );
+  await writeServerSnapshot(siteDir, { checkedAt: new Date().toISOString(), changed: serverDifferences(state.files, remoteHashes) });
   return { state, entries, local, remote };
+}
+
+export interface LocalSiteChanges {
+  entries: ChangeEntry[];
+  /** When the server was last checked; null if it never was since the pull. */
+  serverCheckedAt: string | null;
+  /** The local scan, to pass back with the paths that changed since (much faster than a full scan). */
+  local: Map<string, LocalFile>;
+}
+
+/**
+ * The same comparison without connecting: the local folder against the server
+ * as it was at the last check (computeSiteChanges saves that). Local changes
+ * are always current; server changes are as of `serverCheckedAt`.
+ */
+export async function localSiteChanges(
+  siteDir: string,
+  options: { exclude?: ExcludeOptions; signal?: AbortSignal; since?: { local: Map<string, LocalFile>; changed: readonly string[] } } = {},
+): Promise<LocalSiteChanges> {
+  const state = await requireState(siteDir);
+  const matcher = new PathMatcher(excludePatterns(options.exclude ?? {}));
+  const scan = async () => {
+    if (!options.since) return scanLocal(siteDir, matcher, state.files, { signal: options.signal });
+    await updateLocal(siteDir, matcher, state.files, options.since.changed, options.since.local, { signal: options.signal });
+    return options.since.local;
+  };
+  const [local, snapshot] = await Promise.all([scan(), readServerSnapshot(siteDir)]);
+  const entries = computeChangeSet(
+    new Map(Object.entries(state.files).map(([p, e]) => [p, e.hash])),
+    new Map([...local].map(([p, f]) => [p, f.hash])),
+    serverHashes(state.files, snapshot),
+  );
+  return { entries, serverCheckedAt: snapshot?.checkedAt ?? null, local };
 }
 
 function selectEntries(
@@ -162,6 +198,7 @@ export async function pushFiles(
     // Record whatever succeeded, even if the batch was cancelled part-way.
     state.lastPushedAt = new Date().toISOString();
     await writeSiteState(siteDir, state);
+    await forgetServerDifferences(siteDir, [...result.transferred, ...result.deleted]);
   }
   return result;
 }
@@ -216,6 +253,7 @@ export async function pullFiles(
     }
   } finally {
     await writeSiteState(siteDir, state);
+    await forgetServerDifferences(siteDir, [...result.transferred, ...result.deleted]);
   }
   return result;
 }

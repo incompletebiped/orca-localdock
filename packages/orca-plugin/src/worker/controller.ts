@@ -1,13 +1,17 @@
+import { watch as watchFiles } from 'node:fs';
 import * as path from 'node:path';
 import {
   LocalDockError,
+  PathMatcher,
   TABLE_GROUPS,
   computeSiteChanges,
+  excludePatterns,
   createLogger,
   discoverSites,
   isCancelled,
   isEmptyProject,
   isRootSession,
+  localSiteChanges,
   localTableGroups,
   pullDatabase,
   pullFiles,
@@ -20,6 +24,7 @@ import {
   stopSite,
   type Ddev,
   type DdevCheck,
+  type LocalFile,
   type DiscoveredSite,
   type Logger,
   type OperationContext,
@@ -47,6 +52,8 @@ export interface ControllerDeps {
   /** Called whenever the panel state changes. */
   publish: (state: PanelState) => void;
   concurrency?: number;
+  /** Watch the tracked project's files to keep its local changes current (default true). */
+  watchFiles?: boolean;
 }
 
 const HOST_LABELS_KEY = 'hostLabels';
@@ -78,6 +85,15 @@ export class LocalDockController {
   private jobHome: { dir: string; view: PanelView } | null = null;
   /** Empty projects the user asked to use LocalDock in. Others aren't touched (no SSH host listing either). */
   private readonly setUpDirs = new Set<string>();
+  /** The project whose site the tracking view shows, so its change list is never shown for another one. */
+  private trackingDir: string | null = null;
+  /** A running local change scan, and whether another was asked for meanwhile. */
+  private localScan: { dir: string; again: boolean; done: Promise<void> } | null = null;
+  /** The watched project's last local scan (null until the first one), and the paths the watcher saw change since. */
+  private localFiles: { dir: string; local: Map<string, LocalFile> | null; changed: Set<string> } | null = null;
+  /** Bumped by every server check, so a slower local scan started before it can't overwrite its result. */
+  private serverChecks = 0;
+  private watcher: { dir: string; close: () => void } | null = null;
   private readonly logger: Logger;
 
   constructor(private readonly deps: ControllerDeps) {
@@ -230,10 +246,14 @@ export class LocalDockController {
   /** Decide what the panel shows for the active project. */
   async refresh(): Promise<void> {
     this.project = await this.deps.host.activeProject();
-    if (!this.project) return this.setView({ view: 'no-project' });
+    if (!this.project) {
+      this.watch(null);
+      return this.setView({ view: 'no-project' });
+    }
     if (this.job && this.jobHome && this.here(this.jobHome.dir)) return this.setView(this.jobHome.view);
     const state = await readSiteState(this.project.path);
     if (state) return this.refreshTracking(state);
+    this.watch(null);
     const project = await this.requireEmptyProject();
     if (!project) return;
     if (!this.setUpDirs.has(project.path)) return this.setView({ view: 'set-up', projectName: path.basename(project.path) });
@@ -367,7 +387,8 @@ export class LocalDockController {
     const project = await this.requireProject();
     const s = state ?? (await readSiteState(project.path));
     if (!s) return this.refresh();
-    const prev = this.view.view === 'tracking' ? this.view : null;
+    const prev = this.view.view === 'tracking' && this.trackingDir === project.path ? this.view : null;
+    this.trackingDir = project.path;
     this.setView({
       view: 'tracking',
       site: {
@@ -384,6 +405,76 @@ export class LocalDockController {
       dbGroups: prev?.dbGroups ?? null,
       lastBackup: prev?.lastBackup,
     });
+    this.watch(project.path);
+    void this.updateLocalChanges(project.path);
+  }
+
+  /**
+   * Recompute the change list without connecting: the local folder against the server as of the last check.
+   * Cheap (only files whose size or mtime changed are read), so it runs on every refresh and file change.
+   */
+  private updateLocalChanges(dir: string): Promise<void> {
+    if (this.localScan?.dir === dir) {
+      this.localScan.again = true;
+      return this.localScan.done;
+    }
+    const scan = { dir, again: true, done: Promise.resolve() };
+    scan.done = (async () => {
+      try {
+        while (scan.again) {
+          scan.again = false;
+          const checks = this.serverChecks;
+          // After the first full scan, only re-check what the watcher saw change.
+          const watched = this.localFiles?.dir === dir ? this.localFiles : null;
+          const since = watched?.local ? { local: watched.local, changed: [...watched.changed] } : undefined;
+          if (since) watched!.changed.clear();
+          const r = await localSiteChanges(dir, since ? { since } : {});
+          if (watched && !watched.local) {
+            watched.local = r.local;
+            if (watched.changed.size > 0) scan.again = true; // changed while the full scan ran
+          }
+          if (checks !== this.serverChecks || this.view.view !== 'tracking' || !this.here(dir)) continue;
+          const changes = { rows: r.entries, serverCheckedAt: r.serverCheckedAt };
+          if (JSON.stringify(changes) === JSON.stringify(this.view.changes)) continue;
+          this.view = { ...this.view, changes };
+          this.emit();
+        }
+      } catch (err) {
+        this.logger.warn(`Checking local changes: ${(err as Error).message}`);
+      } finally {
+        if (this.localScan === scan) this.localScan = null;
+      }
+    })();
+    this.localScan = scan;
+    return scan.done;
+  }
+
+  /** Keep the tracked project's local changes current as files change (null: stop watching). */
+  private watch(dir: string | null): void {
+    if (this.deps.watchFiles === false || this.watcher?.dir === dir) return;
+    this.watcher?.close();
+    this.watcher = null;
+    // Changes made while nobody watched aren't known, so the first scan after this is a full one.
+    this.localFiles = dir ? { dir, local: null, changed: new Set() } : null;
+    if (!dir) return;
+    const matcher = new PathMatcher(excludePatterns());
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const w = watchFiles(dir, { recursive: true }, (_event, name) => {
+        const rel = name && String(name).split(path.sep).join('/');
+        if (!rel || matcher.excludes(rel)) return;
+        if (this.localFiles?.dir === dir) this.localFiles.changed.add(rel);
+        // A running job (a pull, a push) writes files itself and refreshes when it's done.
+        if (this.job) return;
+        clearTimeout(timer);
+        timer = setTimeout(() => void this.updateLocalChanges(dir), 1500);
+      });
+      w.on('error', () => {});
+      this.watcher = { dir, close: () => (clearTimeout(timer), w.close()) };
+    } catch (err) {
+      this.localFiles = null; // no watcher: every check is a full scan
+      this.logger.warn(`Watching ${dir} for changes: ${(err as Error).message}`);
+    }
   }
 
   /** Run an engine operation for the tracked site in this project. */
@@ -397,9 +488,10 @@ export class LocalDockController {
 
   private async scanChanges(): Promise<void> {
     await this.tracked('Checking for changes', true, async (ctx, dir) => {
+      this.serverChecks++;
       const changes = await computeSiteChanges(ctx, dir);
       if (this.view.view === 'tracking' && this.here(dir)) {
-        this.view = { ...this.view, changes: { rows: changes.entries, scannedAt: new Date().toISOString() } };
+        this.view = { ...this.view, changes: { rows: changes.entries, serverCheckedAt: new Date().toISOString() } };
         this.emit();
       }
     });
@@ -413,8 +505,10 @@ export class LocalDockController {
         ? { kind: 'error', text: `${verb} ${r.transferred.length}, removed ${r.deleted.length}; ${r.failed.length} failed (${r.failed[0]!.path}: ${r.failed[0]!.error}).` }
         : { kind: 'success', text: `${verb} ${r.transferred.length} file(s), removed ${r.deleted.length}.` };
       await this.refreshTracking();
+      // Pushed or pulled files match the server again; no need to re-check the whole server.
+      this.serverChecks++;
+      await this.updateLocalChanges(dir);
     });
-    await this.scanChanges();
   }
 
   private async startStop(which: 'start' | 'stop'): Promise<void> {
@@ -515,6 +609,7 @@ export class LocalDockController {
   }
 
   dispose(): void {
+    this.watch(null);
     this.abort?.abort();
     for (const { session } of this.sessions.values()) session.close();
     this.sessions.clear();
