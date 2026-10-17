@@ -7,7 +7,9 @@ import { scanLocal, sha1File, updateLocal } from '../src/sync/localScan.js';
 import { hashRemoteFiles, listRemoteFiles, reuseBaselineHashes } from '../src/sync/remoteScan.js';
 import { readSiteState, writeSiteState, type SiteState } from '../src/sync/state.js';
 import { forgetServerDifferences, serverDifferences, writeServerSnapshot } from '../src/sync/serverSnapshot.js';
-import { localSiteChanges } from '../src/operations/fileSync.js';
+import { computeSiteChanges, localSiteChanges } from '../src/operations/fileSync.js';
+import type { OperationContext } from '../src/operations/context.js';
+import { silentLogger } from '../src/log.js';
 import { PathMatcher } from '../src/util/glob.js';
 import { excludePatterns } from '../src/sync/excludes.js';
 import type { ExecResult, RemoteShell } from '../src/ssh/types.js';
@@ -222,6 +224,37 @@ describe('change list without connecting', () => {
 
     await forgetServerDifferences(dir, ['index.php']);
     expect((await localSiteChanges(dir)).entries.map((e) => e.path)).toEqual(['wp-content/themes/x/functions.php']);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('records the new mtime of server files rewritten with the same content, so they are not hashed again', async () => {
+    const { dir, baseline } = await site();
+    const Z = String.fromCharCode(0);
+    const paths = Object.keys(baseline);
+    const serverHash = (rel: string) => (rel === 'wp-content/themes/x/functions.php' ? 'f'.repeat(40) : baseline[rel]!.hash);
+    let hashed: string[] = [];
+    const shell: RemoteShell = {
+      exec: async (cmd, opts): Promise<ExecResult> => {
+        if (cmd.includes('find .')) {
+          opts!.stdout!.write(Buffer.from(paths.map((rel) => [rel, baseline[rel]!.size, 500].join(Z) + Z).join('')));
+          return { code: 0, stdout: '', stderr: '' };
+        }
+        hashed = paths.filter((rel) => cmd.includes(rel));
+        return { code: 0, stderr: '', stdout: hashed.map((rel) => serverHash(rel) + '\n').join('') };
+      },
+    };
+    const ctx = { shell, logger: silentLogger, progress: () => {} } as unknown as OperationContext;
+
+    const first = await computeSiteChanges(ctx, dir);
+    expect(hashed.sort()).toEqual([...paths].sort());
+    expect(first.entries.filter((e) => e.direction !== 'same').map((e) => [e.path, e.direction])).toEqual([['wp-content/themes/x/functions.php', 'pull']]);
+    const saved = (await readSiteState(dir))!.files;
+    expect(saved['index.php']!.remoteMtime).toBe(500);
+    expect(saved['wp-content/themes/x/functions.php']!.remoteMtime).toBe(0);
+
+    hashed = [];
+    await computeSiteChanges(ctx, dir);
+    expect(hashed).toEqual(['wp-content/themes/x/functions.php']);
     await fs.rm(dir, { recursive: true, force: true });
   });
 });

@@ -52,7 +52,19 @@ export async function computeSiteChanges(
       signal: ctx.signal,
       onProgress: (n) => ctx.progress({ phase: 'scan', message: 'Checking changed server files…', current: n, total: toHash.length }),
     });
-    for (const [rel, h] of hashes) remote.get(rel)!.hash = h;
+    // Files rewritten with the same content (plugin auto-updates, WP Toolkit) only moved their mtime. Record the
+    // new mtime, so they aren't hashed again on every check.
+    let touched = 0;
+    for (const [rel, h] of hashes) {
+      const f = remote.get(rel)!;
+      f.hash = h;
+      const base = state.files[rel];
+      if (base && base.hash === h && base.size === f.size && base.remoteMtime !== f.mtime) {
+        base.remoteMtime = f.mtime;
+        touched++;
+      }
+    }
+    if (touched > 0) await writeSiteState(siteDir, state);
   }
 
   const remoteHashes = new Map([...remote].filter(([, f]) => f.hash !== undefined).map(([p, f]) => [p, f.hash!]));
