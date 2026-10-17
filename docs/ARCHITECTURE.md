@@ -33,6 +33,10 @@ This package has no Orca or VS Code dependencies.
   - Pushes are selective by table group, and each one takes a gzipped backup first, with automatic rollback.
   - URL search-replace keeps PHP serialized data intact (mysqli, `allowed_classes: false`).
 - `ddev/`: `ddev config`, `start`, `stop`, `describe`, `import-db`, `wp search-replace`, plus the local-only `wp-config.php` and helper files.
+  - The PHP version comes from the site's cPanel `.htaccess` handler (`ea-php83` → 8.3), falling back to the server's CLI `php`.
+  - Media (`wp-content/uploads`) isn't pulled, except for the CSS that themes and page builders generate there. Missing media is redirected to the live site.
+  - On Windows, the project's drive is mounted inside Docker Desktop's WSL distro before each start, so projects on removable drives work.
+  - Docker housekeeping: stopping the last site runs `ddev poweroff`, Docker Desktop can be started and quit from the panel, and "Free up space" removes only DDEV images tagged for another DDEV version.
 - `ssh/`: the `RemoteShell` and `RemoteFs` interfaces the engine runs on. `SshConnection` is an ssh2 implementation with host-key pinning, for the case where Orca exposes connection details rather than sessions.
 
 ### `packages/orca-plugin`: the plugin
@@ -63,8 +67,9 @@ The engine, the controller and the UI stay the same.
 | File | Purpose | Synced? |
 |---|---|---|
 | `.localdock/state.json` | Sync baseline | No |
+| `.localdock/server.json` | The server's changes since the baseline, from the last check | No |
 | `.localdock/db.sql` | Last database dump (**contains personal data**) | No |
 | `.ddev/` | DDEV project config | No |
 | `wp-config.php` | Local config: table prefix, local salts, loads `wp-config-ddev.php` | No (production keeps its own) |
-| `wp-content/mu-plugins/localdock-dev.php` | Turns off cache plugins locally | No |
+| `wp-content/mu-plugins/localdock-dev.php` | Turns off cache plugins locally, hides PHP notices on web pages, and sends missing media to the live site | No |
 | `wp-content/uploads/.htaccess` | Serves missing media from the live site | No |

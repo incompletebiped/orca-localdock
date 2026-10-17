@@ -8,12 +8,12 @@
 1. **Create a new, empty project** in Orca, open the LocalDock tab, and click **Use LocalDock in this project**. LocalDock leaves projects you don’t set up alone.
 2. **Connect to a server.** LocalDock uses the SSH hosts you've already added in Orca (Settings → SSH). Add one that points at a cPanel server: log in as `root` to see every account on a WHM server, or as a cPanel account user to see that account's sites. If no host is connected, the tab tells you what to do.
 3. **Pick a WordPress site.** LocalDock scans the server (via cPanel's own `whmapi1`/`uapi`) and lists every WordPress install it finds.
-4. **Pull it.** The site's files and database come down into the project, and **[DDEV](https://ddev.com)** runs it locally, with the same PHP and database versions as the server.
+4. **Pull it.** The site's files and database come down into the project, and **[DDEV](https://ddev.com)** runs it locally, with the same PHP and database versions as the server. Media (`wp-content/uploads`) stays on the server: the local site loads missing images from the live one.
 5. **Work like Source Control.** Once a site is pulled, the tab stops listing server sites and becomes a sync view for this project:
    - **Local changes** you can push (edits by you or an AI agent in Orca).
    - **Server changes** you can pull (plugin updates, edits made in WP Admin).
    - **Changed on both sides**: flagged, never silently overwritten.
-   - **Start / Stop** the local site, and open it, WP Admin or Mailpit.
+   - **Start / Stop** the local site, and open it, WP Admin or Mailpit. LocalDock starts Docker Desktop if needed, and offers to quit it and free disk space when no site is running.
    - **Database:** pull the live database, or push selected table groups (content, settings, …) with an automatic server-side backup and rollback.
 
 Nothing is installed on your server, and no server details are stored by LocalDock: connections are Orca's.
