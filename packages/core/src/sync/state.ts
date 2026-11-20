@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { z } from 'zod';
+import { readFileIfExists, writeFileAtomic } from '../util/fsRetry.js';
 
 /**
  * What a file looked like the last time local and live were in sync for it
@@ -42,21 +43,15 @@ export function statePath(siteDir: string): string {
   return path.join(siteDir, LOCALDOCK_DIR, STATE_FILE);
 }
 
+/** The site's sync state, or null when the folder has none. A file that's there but can't be read is an error, not "no site". */
 export async function readSiteState(siteDir: string): Promise<SiteState | null> {
-  let raw: string;
-  try {
-    raw = await fs.readFile(statePath(siteDir), 'utf-8');
-  } catch {
-    return null;
-  }
-  return siteStateSchema.parse(JSON.parse(raw));
+  const raw = await readFileIfExists(statePath(siteDir));
+  return raw === null ? null : siteStateSchema.parse(JSON.parse(raw));
 }
 
 /** Write atomically so an interrupted write never leaves a half-written state file. */
 export async function writeSiteState(siteDir: string, state: SiteState): Promise<void> {
   const file = statePath(siteDir);
   await fs.mkdir(path.dirname(file), { recursive: true });
-  const tmp = file + '.tmp';
-  await fs.writeFile(tmp, JSON.stringify(state, null, 2), { encoding: 'utf-8', mode: 0o600 });
-  await fs.rename(tmp, file);
+  await writeFileAtomic(file, JSON.stringify(state, null, 2));
 }

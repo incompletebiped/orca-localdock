@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as readline from 'node:readline';
+import { renameRetry } from '../util/fsRetry.js';
 
 function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -90,7 +91,7 @@ async function transformDump(sqlPath: string, transform: (line: string) => strin
     await fsp.rm(tmpPath, { force: true });
     throw err;
   }
-  await fsp.rename(tmpPath, sqlPath);
+  await renameRetry(tmpPath, sqlPath);
 }
 
 /** Rewrite one site URL to another throughout a dump file (http and https variants of `from`). */

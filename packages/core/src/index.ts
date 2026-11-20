@@ -7,6 +7,7 @@ export * from './util/glob.js';
 export * from './util/semver.js';
 export * from './util/concurrency.js';
 export * from './util/format.js';
+export * from './util/fsRetry.js';
 
 export * from './ssh/types.js';
 export * from './ssh/SshConnection.js';

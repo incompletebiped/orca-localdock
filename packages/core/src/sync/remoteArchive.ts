@@ -7,6 +7,7 @@ import type { Writable } from 'node:stream';
 import { Parser, type ReadEntry } from 'tar';
 import { LocalDockError } from '../errors.js';
 import type { RemoteShell } from '../ssh/types.js';
+import { renameRetry } from '../util/fsRetry.js';
 import { assertSafeRemoteDir, localJoin } from '../util/remotePath.js';
 import { shq } from '../util/shell.js';
 import type { RemoteFile } from './remoteScan.js';
@@ -139,6 +140,6 @@ async function writeEntry(entry: ReadEntry, siteDir: string, rel: string, onByte
   }
   if (writeError) throw writeError;
   if (!complete) throw new LocalDockError('Download stopped part-way', 'CANCELLED');
-  await fs.rename(tmp, file);
+  await renameRetry(tmp, file);
   return { hash: hash.digest('hex'), file };
 }

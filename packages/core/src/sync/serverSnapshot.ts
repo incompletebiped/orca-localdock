@@ -1,8 +1,8 @@
-import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { z } from 'zod';
 import type { HashMap } from './changeSet.js';
 import { LOCALDOCK_DIR, type BaselineEntry } from './state.js';
+import { readFileIfExists, writeFileAtomic } from '../util/fsRetry.js';
 
 /**
  * What the server looked like at the last check, kept as its differences
@@ -22,9 +22,12 @@ function snapshotPath(siteDir: string): string {
   return path.join(siteDir, LOCALDOCK_DIR, SNAPSHOT_FILE);
 }
 
+/** The last check's snapshot, or null when there is none (or it's unreadable as JSON: the next check rewrites it). */
 export async function readServerSnapshot(siteDir: string): Promise<ServerSnapshot | null> {
+  const raw = await readFileIfExists(snapshotPath(siteDir));
+  if (raw === null) return null;
   try {
-    return serverSnapshotSchema.parse(JSON.parse(await fs.readFile(snapshotPath(siteDir), 'utf-8')));
+    return serverSnapshotSchema.parse(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -32,9 +35,7 @@ export async function readServerSnapshot(siteDir: string): Promise<ServerSnapsho
 
 export async function writeServerSnapshot(siteDir: string, snapshot: ServerSnapshot): Promise<void> {
   const file = snapshotPath(siteDir);
-  const tmp = `${file}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(snapshot), { encoding: 'utf-8', mode: 0o600 });
-  await fs.rename(tmp, file);
+  await writeFileAtomic(file, JSON.stringify(snapshot));
 }
 
 /** The server's differences from the baseline, from a full server listing (path → hash). */
