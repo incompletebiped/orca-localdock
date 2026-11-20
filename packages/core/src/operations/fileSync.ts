@@ -6,7 +6,7 @@ import { scanLocal, sha1File, updateLocal, type LocalFile } from '../sync/localS
 import { downloadArchive, type ArchiveDownload } from '../sync/remoteArchive.js';
 import { hashRemoteFiles, listRemoteFiles, reuseBaselineHashes, type RemoteFile } from '../sync/remoteScan.js';
 import { forgetServerDifferences, readServerSnapshot, serverDifferences, serverHashes, writeServerSnapshot } from '../sync/serverSnapshot.js';
-import { readSiteState, writeSiteState, type SiteState } from '../sync/state.js';
+import { readSiteState, writeSiteState, type BaselineEntry, type SiteState } from '../sync/state.js';
 import { mapLimit } from '../util/concurrency.js';
 import { formatBytes } from '../util/format.js';
 import { PathMatcher } from '../util/glob.js';
@@ -287,8 +287,9 @@ export function downloadFiles(
   siteDir: string,
   docroot: string,
   files: ReadonlyMap<string, RemoteFile>,
-  onFile?: (rel: string) => void,
+  onFile?: (rel: string, entry: BaselineEntry) => void,
 ): Promise<ArchiveDownload> {
+  if (files.size === 0) return Promise.resolve({ files: {}, failed: [] });
   const count = `${files.size} file${files.size === 1 ? '' : 's'}`;
   ctx.progress({ phase: 'files', message: `Downloading ${count}…` });
   return downloadArchive(ctx.shell, docroot, siteDir, files, {

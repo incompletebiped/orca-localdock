@@ -11,6 +11,7 @@ import { renameRetry } from '../util/fsRetry.js';
 import { assertSafeRemoteDir, localJoin } from '../util/remotePath.js';
 import { shq } from '../util/shell.js';
 import type { RemoteFile } from './remoteScan.js';
+import { PART_SUFFIX } from './pullProgress.js';
 import type { BaselineEntry } from './state.js';
 
 export interface ArchiveDownload {
@@ -46,7 +47,7 @@ export async function downloadArchive(
     signal?: AbortSignal;
     onProgress?: (bytes: number, totalBytes: number) => void;
     /** Called as each file lands in the site folder. */
-    onFile?: (rel: string) => void;
+    onFile?: (rel: string, entry: BaselineEntry) => void;
     /** Archives to send side by side (default 4). */
     streams?: number;
   } = {},
@@ -113,7 +114,7 @@ async function downloadOne(
   siteDir: string,
   wanted: ReadonlyMap<string, RemoteFile>,
   result: ArchiveDownload,
-  options: { signal: AbortSignal; onBytes: (n: number) => void; onFile?: (rel: string) => void },
+  options: { signal: AbortSignal; onBytes: (n: number) => void; onFile?: (rel: string, entry: BaselineEntry) => void },
 ): Promise<void> {
   const pending = new Map(wanted);
   const writes: Promise<void>[] = [];
@@ -132,8 +133,9 @@ async function downloadOne(
       writeEntry(entry, siteDir, rel, options.onBytes).then(
         async ({ hash, file }) => {
           const st = await fs.stat(file);
-          result.files[rel] = { hash, size: st.size, remoteMtime: meta.mtime, localMtimeMs: st.mtimeMs };
-          options.onFile?.(rel);
+          const entry = { hash, size: st.size, remoteMtime: meta.mtime, localMtimeMs: st.mtimeMs };
+          result.files[rel] = entry;
+          options.onFile?.(rel, entry);
         },
         (err: unknown) => {
           result.failed.push({ path: rel, error: err instanceof Error ? err.message : String(err) });
@@ -181,7 +183,7 @@ async function writeEntry(entry: ReadEntry, siteDir: string, rel: string, onByte
     entry.resume();
     throw err;
   }
-  const tmp = `${file}.localdock-part`;
+  const tmp = `${file}${PART_SUFFIX}`;
   const out = createWriteStream(tmp);
   let writeError: Error | undefined;
   out.on('error', (err) => (writeError ??= err));

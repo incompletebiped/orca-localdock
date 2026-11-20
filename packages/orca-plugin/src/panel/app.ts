@@ -71,6 +71,7 @@ export function mountPanel(root: HTMLElement, bridge: PanelBridge): void {
   const confirmText = (action: PanelActionInput): string | null => {
     if (action.type === 'push-db') return 'Overwrite the selected tables on the LIVE site? A backup is taken first.';
     if (action.type === 'rollback-db') return 'Restore the live database to the backup taken before the last push?';
+    if (action.type === 'discard-pull') return 'Delete everything this pull downloaded into the project? The live site isn’t touched.';
     const texts: string[] = [];
     if ((action.type === 'push-files' || action.type === 'pull-files') && action.allowConflicts) {
       texts.push('These files changed on both sides. Overwrite the other side’s version?');

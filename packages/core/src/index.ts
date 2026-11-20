@@ -26,6 +26,7 @@ export * from './sync/localScan.js';
 export * from './sync/remoteScan.js';
 export * from './sync/remoteArchive.js';
 export * from './sync/serverSnapshot.js';
+export * from './sync/pullProgress.js';
 
 export * from './db/sqlDump.js';
 export * from './db/tableGroups.js';

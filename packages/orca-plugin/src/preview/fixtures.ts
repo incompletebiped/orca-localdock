@@ -33,6 +33,17 @@ export const FIXTURES: Record<string, PanelState> = {
     site: sites[0]!,
     job: { title: 'Pulling example.com', message: 'Downloading files… (1204/3311)', current: 1204, total: 3311, cancellable: true },
   },
+  'Pull interrupted': {
+    ...base,
+    view: 'pull-interrupted',
+    projectName: 'new-site',
+    domain: 'example.com',
+    hostLabel: 'Example cPanel server',
+    filesDone: 2140,
+    startedAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+    canResume: true,
+    notice: { kind: 'error', text: 'The connection to server.example.com dropped. Try again.' },
+  },
   'Source control': {
     ...base,
     view: 'tracking',

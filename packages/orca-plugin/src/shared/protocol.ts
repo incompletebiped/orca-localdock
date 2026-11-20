@@ -100,6 +100,11 @@ export type PanelView =
   | { view: 'scanning'; host: HostSummary }
   | { view: 'site-list'; host: HostSummary; sites: SiteSummary[]; projectEmpty: boolean }
   | { view: 'pulling'; host: HostSummary; site: SiteSummary }
+  /**
+   * A pull stopped before it finished (connection dropped, cancelled, Orca closed). `canResume` is false when
+   * this computer has no record of which server it came from (e.g. the folder was copied from another one).
+   */
+  | { view: 'pull-interrupted'; projectName: string; domain: string; hostLabel: string | null; filesDone: number; startedAt: string; canResume: boolean }
   | {
       view: 'tracking';
       site: TrackedSite;

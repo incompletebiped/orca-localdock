@@ -108,6 +108,18 @@ function renderView(state: PanelState, ui: UiState): string {
       return renderSites(state.host, state.sites, state.projectEmpty, ui);
     case 'pulling':
       return `<h2>Pulling ${esc(state.site.domain)}</h2><p class="muted">From ${esc(state.host.label)} into this project. Files first, then the database, then DDEV starts the site.</p>`;
+    case 'pull-interrupted': {
+      const from = state.hostLabel ? ` from ${state.hostLabel}` : '';
+      const done = `${state.filesDone} file${state.filesDone === 1 ? '' : 's'}`;
+      return empty(
+        `The pull of ${state.domain} didn’t finish`,
+        state.canResume
+          ? `It stopped part-way (started ${timeAgo(state.startedAt)}), with ${done} already here. Resume picks up where it left off${from}: files that are still current are kept, and the database is downloaded afresh.`
+          : `It stopped part-way, with ${done} downloaded. LocalDock on this computer has no record of which server it came from, so it can’t resume it. Start over clears the project so you can pull the site again.`,
+        (state.canResume ? button('Resume pull', { type: 'resume-pull' }, { primary: true, disabled: Boolean(state.job) }) : '') +
+          button('Start over', { type: 'discard-pull' }, { danger: true, disabled: Boolean(state.job) }),
+      );
+    }
     case 'tracking':
       return renderTracking(state, ui);
     case 'error':

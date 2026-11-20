@@ -19,6 +19,7 @@ import type { Ddev, DdevDescription } from '../ddev/Ddev.js';
 import { devMuPlugin, localWpConfig, sanitizeHtaccess, uploadsProxyHtaccess } from '../ddev/templates.js';
 import type { DiscoveredSite } from '../discovery/discover.js';
 import { excludePatterns, type ExcludeOptions } from '../sync/excludes.js';
+import { clearPullProgress, filesLeftToPull, readPullProgress, removePartialDownloads, writePullProgress, type PullProgress } from '../sync/pullProgress.js';
 import { listRemoteFiles } from '../sync/remoteScan.js';
 import { LOCALDOCK_DIR, readSiteState, writeSiteState, type SiteState } from '../sync/state.js';
 import { formatBytes, type ByteProgress } from '../util/format.js';
@@ -82,12 +83,17 @@ export function phpVersionFromHtaccess(content: string): string | undefined {
 
 export interface PullSiteOptions {
   hostId: string;
-  site: DiscoveredSite;
+  site: Pick<DiscoveredSite, 'account' | 'domain' | 'docroot'>;
   projectDir: string;
   exclude?: ExcludeOptions;
   /** Start DDEV and import the database after downloading. */
   start: boolean;
+  /** Pick up an interrupted pull of this site in this project: files it finished (and unchanged since) are kept. */
+  resume?: boolean;
 }
+
+/** How often a pull saves the list of files it has finished, so an interruption loses at most this much. */
+const SAVE_PROGRESS_MS = 3000;
 
 export interface PullSiteResult {
   state: SiteState;
@@ -96,18 +102,26 @@ export interface PullSiteResult {
 }
 
 /**
- * Pull a site into an empty project: files over SFTP, the database dump, the
- * sync baseline, a local wp-config.php, and the DDEV project.
+ * Pull a site into an empty project: files, the database dump, the sync
+ * baseline, a local wp-config.php, and the DDEV project. The files finished
+ * so far are saved as it goes (`.localdock/pull.json`), so an interrupted pull
+ * can be resumed with `resume`; the database is always downloaded afresh.
  */
 export async function pullSite(ctx: OperationContext, opts: PullSiteOptions): Promise<PullSiteResult> {
   const docroot = assertSafeRemoteDir(opts.site.docroot);
   if (await readSiteState(opts.projectDir)) {
     throw new LocalDockError('This project already holds a LocalDock site.', 'CONFLICT_DETECTED', false);
   }
-  if (!(await isEmptyProject(opts.projectDir))) {
+  const earlier = opts.resume ? await readPullProgress(opts.projectDir) : null;
+  if (earlier && earlier.domain !== opts.site.domain) {
+    throw new LocalDockError(`This project holds an unfinished pull of ${earlier.domain}, not ${opts.site.domain}.`, 'CONFLICT_DETECTED', false);
+  }
+  if (!opts.resume && !(await isEmptyProject(opts.projectDir))) {
     throw new LocalDockError('Pull into an empty project. This one already has files in it.', 'CONFLICT_DETECTED', false);
   }
-  await fs.mkdir(path.join(opts.projectDir, LOCALDOCK_DIR), { recursive: true });
+  if (opts.resume) await removePartialDownloads(opts.projectDir);
+  const progress: PullProgress = { version: 1, domain: opts.site.domain, startedAt: earlier?.startedAt ?? new Date().toISOString(), files: earlier?.files ?? {} };
+  await writePullProgress(opts.projectDir, progress);
 
   ctx.progress({ phase: 'database', message: 'Reading the site configuration…' });
   const creds = await readRemoteDbCredentials(ctx.sftp, docroot);
@@ -116,6 +130,9 @@ export async function pullSite(ctx: OperationContext, opts: PullSiteOptions): Pr
   ctx.progress({ phase: 'files', message: 'Listing server files…' });
   const matcher = new PathMatcher(excludePatterns(opts.exclude));
   const remote = await listRemoteFiles(ctx.shell, docroot, matcher, { signal: ctx.signal });
+  const { kept, left } = earlier ? await filesLeftToPull(opts.projectDir, remote, earlier.files) : { kept: {}, left: remote };
+  progress.files = { ...kept };
+  if (earlier) ctx.logger.info(`Resuming the pull of ${opts.site.domain}: ${Object.keys(kept).length} of ${remote.size} files already here`);
 
   const state: SiteState = {
     version: 1,
@@ -129,8 +146,27 @@ export async function pullSite(ctx: OperationContext, opts: PullSiteOptions): Pr
     files: {},
   };
 
-  const { files, failed } = await downloadFiles(ctx, opts.projectDir, docroot, remote);
-  state.files = files;
+  // Saved every few seconds, and once more however the download ends.
+  let unsaved = false;
+  let saving = Promise.resolve();
+  const save = () => (saving = saving.then(() => writePullProgress(opts.projectDir, progress)).catch((err: Error) => ctx.logger.warn(`Saving pull progress: ${err.message}`)));
+  const timer = setInterval(() => {
+    if (!unsaved) return;
+    unsaved = false;
+    void save();
+  }, SAVE_PROGRESS_MS);
+  let down;
+  try {
+    down = await downloadFiles(ctx, opts.projectDir, docroot, left, (rel, entry) => {
+      progress.files[rel] = entry;
+      unsaved = true;
+    });
+  } finally {
+    clearInterval(timer);
+    await save();
+  }
+  const { files, failed } = down;
+  state.files = { ...kept, ...files };
 
   // The root .htaccess isn't synced (it's environment-specific) but the site needs its rewrite rules locally.
   try {
@@ -145,6 +181,7 @@ export async function pullSite(ctx: OperationContext, opts: PullSiteOptions): Pr
   ctx.progress({ phase: 'database', message: 'Downloading the database…' });
   await dumpRemoteDatabase(ctx.shell, ctx.sftp, creds, dumpPath(opts.projectDir), { signal: ctx.signal, onProgress: dbProgress(ctx, 'Downloading the database', true) });
   await writeSiteState(opts.projectDir, state);
+  await clearPullProgress(opts.projectDir);
   await writeLocalFiles(opts.projectDir, state);
 
   ctx.progress({ phase: 'ddev', message: 'Configuring DDEV…' });

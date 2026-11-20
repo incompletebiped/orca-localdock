@@ -68,10 +68,16 @@ describe('downloadArchive', () => {
     ]);
     const progress: Array<[number, number]> = [];
     const landed: string[] = [];
+    const entries: Record<string, unknown> = {};
     const res = await downloadArchive(shell, '/home/acct/public_html/', dir, wanted, {
       onProgress: (b, t) => progress.push([b, t]),
-      onFile: (rel) => landed.push(rel),
+      onFile: (rel, entry) => {
+        landed.push(rel);
+        entries[rel] = entry;
+      },
     });
+    // Each file's record comes with it, so a pull can save its progress as it goes.
+    expect(entries).toEqual(res.files);
 
     expect(seen.command).toBe(`cd '/home/acct/public_html' && tar -czf - --null --no-recursion --ignore-failed-read -T -`);
     // Each name starts with ./, so a file named like a tar option can't be read as one.

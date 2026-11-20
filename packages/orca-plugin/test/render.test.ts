@@ -38,6 +38,17 @@ describe('panel rendering', () => {
     expect(html).toMatch(/pull-site[^>]*disabled/);
   });
 
+  it('offers Resume only for a pull this computer can resume, and Start over either way', () => {
+    const state = FIXTURES['Pull interrupted'] as Extract<PanelState, { view: 'pull-interrupted' }>;
+    const html = render(state, newUiState());
+    expect(html).toContain('resume-pull');
+    expect(html).toContain('discard-pull');
+    expect(html).toContain('2140 files already here');
+    const orphan = render({ ...state, canResume: false, hostLabel: null }, newUiState());
+    expect(orphan).not.toContain('resume-pull');
+    expect(orphan).toContain('no record of which server');
+  });
+
   it('groups changes like Source Control and enables push for selected files', () => {
     const ui = newUiState();
     ui.selected.add('wp-content/themes/example-child/style.css');

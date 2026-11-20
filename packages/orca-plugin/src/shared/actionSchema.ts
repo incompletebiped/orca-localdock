@@ -27,6 +27,8 @@ export const panelActionSchema = z.discriminatedUnion('type', [
     domain: z.string().min(1).max(253),
     includeUploads: z.boolean().default(false),
   }),
+  z.object({ type: z.literal('resume-pull') }),
+  z.object({ type: z.literal('discard-pull') }),
   z.object({ type: z.literal('scan-changes') }),
   z.object({ type: z.literal('push-files'), ...fileSelection }),
   z.object({ type: z.literal('pull-files'), ...fileSelection }),

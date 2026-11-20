@@ -13,12 +13,15 @@ import {
   isRootSession,
   localSiteChanges,
   localTableGroups,
+  planProjectReset,
   pullDatabase,
   pullFiles,
   pullSite,
   pushDatabase,
   pushFiles,
+  readPullProgress,
   readSiteState,
+  resetProject,
   rollbackDatabase,
   startSite,
   stopSite,
@@ -62,6 +65,16 @@ export interface ControllerDeps {
 
 const HOST_LABELS_KEY = 'hostLabels';
 const BINDINGS_KEY = 'siteBindings';
+const PULLS_KEY = 'unfinishedPulls';
+
+/** Where an unfinished pull comes from, kept in plugin storage (not the project folder) so a resume can't be redirected. */
+interface PullBinding {
+  hostId: string;
+  account: string;
+  domain: string;
+  docroot: string;
+  includeUploads: boolean;
+}
 
 /** The server-facing fields of a pulled site (see checkBinding). */
 type SiteBinding = Pick<SiteState, 'hostId' | 'account' | 'domain' | 'docroot' | 'productionUrl' | 'tablePrefix'>;
@@ -253,6 +266,10 @@ export class LocalDockController {
         return this.scanSites(action.hostId);
       case 'pull-site':
         return this.pull(action.hostId, action.account, action.domain, action.includeUploads);
+      case 'resume-pull':
+        return this.resumePull();
+      case 'discard-pull':
+        return this.discardPull();
       case 'scan-changes':
         return this.scanChanges();
       case 'push-files':
@@ -308,9 +325,16 @@ export class LocalDockController {
     const state = await readSiteState(this.project.path);
     if (state) return this.refreshTracking(state);
     this.watch(null);
+    const interrupted = await this.interruptedView(this.project.path);
+    if (interrupted) return this.setView(interrupted);
     const project = await this.requireEmptyProject();
     if (!project) return;
     if (!this.setUpDirs.has(project.path)) return this.setView({ view: 'set-up', projectName: path.basename(project.path) });
+    return this.showSitesOrHosts(project);
+  }
+
+  /** The sites found on the last scanned server, or the server list if there's no scan to show. */
+  private async showSitesOrHosts(project: ProjectInfo): Promise<void> {
     if (this.discovered) {
       const host = await this.findHost(this.discovered.hostId);
       if (host) {
@@ -318,7 +342,7 @@ export class LocalDockController {
           view: 'site-list',
           host: hostSummary(host),
           sites: this.discovered.sites.map(siteSummary),
-          projectEmpty: await isEmptyProject(this.project.path),
+          projectEmpty: await isEmptyProject(project.path),
         });
       }
     }
@@ -424,16 +448,63 @@ export class LocalDockController {
     // Only pull sites this worker discovered itself; the panel just names one.
     const site = this.discovered?.hostId === hostId ? this.discovered.sites.find((s) => s.account === account && s.domain === domain) : undefined;
     if (!site) throw new LocalDockError('Scan the server again; that site is not in the current list.', 'NOT_FOUND', false);
-    const host = await this.requireHost(hostId);
-    this.setView({ view: 'pulling', host: hostSummary(host), site: siteSummary(site) });
+    await this.runPull(project, { hostId, account: site.account, domain: site.domain, docroot: site.docroot, includeUploads }, siteSummary(site), false);
+  }
 
-    const ctx = await this.context(hostId, project.path, `Pulling ${domain}`, true);
+  /** Pick up the unfinished pull in this project, from the server recorded when it started. */
+  private async resumePull(): Promise<void> {
+    const project = await this.requireProject();
+    const progress = await readPullProgress(project.path);
+    if (!progress) throw new LocalDockError('This project has no unfinished pull to resume.', 'NOT_FOUND', false);
+    const binding = (await this.pullBindings())[this.bindingKey(project.path)];
+    if (!binding || binding.domain !== progress.domain) {
+      throw new LocalDockError('LocalDock on this computer has no record of where this pull came from. Start over to pull the site again.', 'NOT_FOUND', false);
+    }
+    const summary: SiteSummary = { account: binding.account, domain: binding.domain, docroot: binding.docroot, wpVersion: '', aliases: [] };
+    await this.runPull(project, binding, summary, true);
+  }
+
+  /** Delete what an unfinished pull downloaded (and its DDEV project, if one was made), leaving the project empty. */
+  private async discardPull(): Promise<void> {
+    const project = await this.requireProject();
+    if (await readSiteState(project.path)) throw new LocalDockError('This project holds a pulled site, not an unfinished pull.', 'CONFLICT_DETECTED', false);
+    if (!(await readPullProgress(project.path))) throw new LocalDockError('This project has no unfinished pull.', 'NOT_FOUND', false);
+    const ctx = await this.context(null, project.path, 'Clearing the unfinished pull', false);
+    const plan = await planProjectReset(project.path);
+    const ddev = plan.ddev && (await this.deps.ddev.version()) !== null ? this.deps.ddev : null;
+    await resetProject(plan, ddev, (message) => ctx.progress({ phase: 'files', message }));
+    await this.forgetPull(project.path);
+    this.setUpDirs.add(project.path);
+    this.notice = { kind: 'info', text: 'Cleared. The project is empty again.' };
+    await this.showSitesOrHosts(project);
+  }
+
+  private async runPull(project: ProjectInfo, from: PullBinding, summary: SiteSummary, resume: boolean): Promise<void> {
+    const { hostId, domain, includeUploads } = from;
+    const host = await this.requireHost(hostId);
+    this.setView({ view: 'pulling', host: hostSummary(host), site: summary });
+    await this.rememberPull(project.path, from);
+
+    const ctx = await this.context(hostId, project.path, `${resume ? 'Resuming the pull of' : 'Pulling'} ${domain}`, true);
     let ddev = await this.ddevCheck();
     // Docker has the whole download to come up; the site starts at the end if it made it.
     const dockerWasDown = Boolean(ddev.dockerError);
     if (dockerWasDown) await this.deps.ddev.launchDocker().catch((err: Error) => this.logger.warn(err.message));
     let installed = ddev.version !== null && !ddev.dockerError;
-    const result = await pullSite(ctx, { hostId, site, projectDir: project.path, exclude: { includeUploads }, start: installed });
+    let result;
+    try {
+      result = await pullSite(ctx, { hostId, site: from, projectDir: project.path, exclude: { includeUploads }, start: installed, resume });
+    } catch (err) {
+      // Stopped part-way: offer to resume (or start over). Nothing was written: nothing to resume.
+      const interrupted = await this.interruptedView(project.path);
+      if (interrupted) {
+        if (this.jobHome) this.jobHome.view = interrupted;
+        if (this.here(project.path)) this.view = interrupted;
+      } else {
+        await this.forgetPull(project.path);
+      }
+      throw err;
+    }
     if (dockerWasDown) {
       ddev = await this.ddevCheck();
       installed = !ddev.dockerError;
@@ -441,6 +512,7 @@ export class LocalDockController {
     }
     await this.rememberHostLabel(host);
     await this.bind(project.path, result.state);
+    await this.forgetPull(project.path);
     this.discovered = null;
     this.notice = result.failed.length
       ? { kind: 'error', text: `Pulled ${result.fileCount - result.failed.length} of ${result.fileCount} files. ${result.failed.length} failed: ${result.failed.slice(0, 3).map((f) => f.path).join(', ')}…` }
@@ -830,6 +902,40 @@ export class LocalDockController {
         false,
       );
     }
+  }
+
+  private async pullBindings(): Promise<Record<string, PullBinding>> {
+    return (await this.deps.host.storageGet<Record<string, PullBinding>>(PULLS_KEY)) ?? {};
+  }
+
+  private async rememberPull(dir: string, from: PullBinding): Promise<void> {
+    const all = await this.pullBindings();
+    all[this.bindingKey(dir)] = from;
+    await this.deps.host.storageSet(PULLS_KEY, all);
+  }
+
+  private async forgetPull(dir: string): Promise<void> {
+    const all = await this.pullBindings();
+    if (!(this.bindingKey(dir) in all)) return;
+    delete all[this.bindingKey(dir)];
+    await this.deps.host.storageSet(PULLS_KEY, all);
+  }
+
+  /** The view for a project holding an unfinished pull, or null if it holds none. */
+  private async interruptedView(dir: string): Promise<PanelView | null> {
+    const progress = await readPullProgress(dir);
+    if (!progress) return null;
+    const binding = (await this.pullBindings())[this.bindingKey(dir)];
+    const canResume = binding?.domain === progress.domain;
+    return {
+      view: 'pull-interrupted',
+      projectName: path.basename(dir),
+      domain: progress.domain,
+      hostLabel: canResume ? ((await this.hostLabel(binding.hostId).catch(() => undefined)) ?? null) : null,
+      filesDone: Object.keys(progress.files).length,
+      startedAt: progress.startedAt,
+      canResume,
+    };
   }
 
   private async rememberHostLabel(host: SshHostInfo): Promise<void> {

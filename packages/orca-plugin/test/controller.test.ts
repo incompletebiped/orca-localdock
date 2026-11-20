@@ -293,6 +293,43 @@ describe('LocalDockController', () => {
     expect(ctl.state().job).toBeNull();
   });
 
+  it('offers to resume a pull that stopped part-way, from the server recorded in its own storage', async () => {
+    host.project = { path: dir, name: 'main' };
+    host.hosts = [{ id: 'h1', label: 'Example server', host: 'server.example.com', port: 22, username: 'root', connected: true }];
+    await ctl.dispatch({ type: 'scan-sites', hostId: 'h1' });
+    // The fake server has no wp-config.php, so the pull stops just after it starts.
+    const failed = await ctl.dispatch({ type: 'pull-site', hostId: 'h1', account: 'exampleco', domain: 'example.com' });
+    expect(failed).toMatchObject({ view: 'pull-interrupted', domain: 'example.com', hostLabel: 'Example server', canResume: true, notice: { kind: 'error' }, job: null });
+    const key = process.platform === 'win32' ? path.resolve(dir).toLowerCase() : path.resolve(dir);
+    expect(host.store.get('unfinishedPulls')).toMatchObject({ [key]: { hostId: 'h1', docroot: '/home/exampleco/public_html' } });
+
+    // Some files arrived before it stopped; the project isn't "empty" now, but it's still this pull's.
+    await fs.writeFile(path.join(dir, 'index.php'), '<?php');
+    expect(await ctl.dispatch({ type: 'refresh' })).toMatchObject({ view: 'pull-interrupted', canResume: true });
+
+    // A resume asks the server recorded at the start, and runs as a resume.
+    const resumed = await ctl.dispatch({ type: 'resume-pull' });
+    expect(published.some((p) => p.job?.title === 'Resuming the pull of example.com')).toBe(true);
+    expect(resumed).toMatchObject({ view: 'pull-interrupted', notice: { kind: 'error' } });
+
+    // Start over empties the project (keeping .git) and goes back to the site list.
+    await fs.mkdir(path.join(dir, '.git'));
+    const cleared = await ctl.dispatch({ type: 'discard-pull' });
+    expect(cleared).toMatchObject({ view: 'site-list', notice: { text: expect.stringMatching(/empty again/) } });
+    expect((await fs.readdir(dir)).sort()).toEqual(['.git']);
+    expect(host.store.get('unfinishedPulls')).toEqual({});
+  });
+
+  it('won’t resume a pull it has no record of starting', async () => {
+    host.project = { path: dir, name: 'main' };
+    await fs.mkdir(path.join(dir, '.localdock'));
+    await fs.writeFile(path.join(dir, '.localdock', 'pull.json'), json({ version: 1, domain: 'example.com', startedAt: new Date().toISOString(), files: {} }));
+    await fs.writeFile(path.join(dir, 'index.php'), '<?php');
+    expect(await ctl.dispatch({ type: 'refresh' })).toMatchObject({ view: 'pull-interrupted', canResume: false, hostLabel: null });
+    expect((await ctl.dispatch({ type: 'resume-pull' })).notice?.text).toMatch(/no record of where this pull came from/);
+    expect(await fs.readdir(dir)).toContain('index.php');
+  });
+
   it('leaves an empty project alone until the user sets it up', async () => {
     host.project = { path: dir, name: 'p' };
     let listed = 0;
