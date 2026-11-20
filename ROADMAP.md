@@ -13,12 +13,14 @@
 - [x] Servers over SSH through the user's SSH config (`ssh -G`, keys and agent, `known_hosts`)
 - [x] End-to-end use on a real cPanel server: check for changes, pull the database, pull files
 - [x] Selective push/pull re-checks only the chosen files; warning before pulling part of a core, plugin or theme update
+- [x] Change lists grouped by WordPress core, plugin and theme, with one-click group push/pull; long lists stay fast
+- [x] Cancel a DDEV start
+- [x] Security review and fixes (see SECURITY.md)
 
 ## Next
 
-- [ ] Group server changes by WordPress core, plugin and theme, with "pull this folder"
-- [ ] Keep long change lists fast (render only what's visible, or "show more")
-- [ ] Cancel a DDEV start
+- [ ] Do file and database work as the cPanel account (`sudo -u`) instead of root, even in a root session
+- [ ] Live DDEV status from `docker events`
 
 ## Orca plugin directory
 
@@ -30,7 +32,6 @@
 
 ## Features
 
-- [ ] Live DDEV status from `docker events`
 - [ ] "DDEV logs" and "Shell" buttons that open an Orca terminal (`ddev logs -f`, `ddev ssh`)
 - [ ] Open a changed file, or its diff, in Orca's editor before pushing
 - [ ] A database viewer (DDEV's Adminer add-on in Orca's browser)
