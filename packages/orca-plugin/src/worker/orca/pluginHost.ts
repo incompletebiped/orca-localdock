@@ -126,7 +126,14 @@ export class PluginOrcaHost implements OrcaHost {
     if (!host) throw new LocalDockError(`No SSH host "${hostId}" in your SSH config (~/.ssh/config).`, 'NOT_FOUND', false);
     const conn = await this.ssh.connect(host.id);
     const sftp = await conn.sftp();
-    return { shell: conn, sftp, close: () => conn.close() };
+    return {
+      shell: conn,
+      sftp,
+      close: () => conn.close(),
+      get closed() {
+        return conn.closed;
+      },
+    };
   }
 
   /** The name Orca shows for one of its SSH hosts (`orca host list`), or null. */

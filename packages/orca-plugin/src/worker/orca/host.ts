@@ -44,6 +44,8 @@ export interface RemoteSession {
   shell: RemoteShell;
   sftp: RemoteFs;
   close(): void;
+  /** True once the connection dropped; the controller then opens a new one. */
+  readonly closed?: boolean;
 }
 
 /** What the Orca status bar item shows; null hides it. */

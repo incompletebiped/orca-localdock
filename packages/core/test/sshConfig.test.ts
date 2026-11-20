@@ -114,4 +114,27 @@ describe('connecting like ssh does', () => {
     ).rejects.toThrow();
     await fs.rm(dir, { recursive: true, force: true });
   });
+
+  it('marks a connection the server drops as closed, without an uncaught error', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-drop-'));
+    const key = utils.generateKeyPairSync('ed25519');
+    await fs.writeFile(path.join(dir, 'k'), key.private);
+    const hostKey = utils.generateKeyPairSync('ed25519');
+    const hostFp = fingerprintHostKey(utils.parseKey(hostKey.public).getPublicSSH() as Buffer);
+    const clients: Array<{ end(): void }> = [];
+    server = new Server({ hostKeys: [hostKey.private] }, (client) => {
+      clients.push(client);
+      client.on('authentication', (ctx) => ctx.accept());
+      client.on('error', () => {});
+    });
+    await new Promise<void>((r) => server!.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as AddressInfo).port;
+    const conn = await SshConnection.connect({
+      host: '127.0.0.1', port, username: 'deploy', auth: { kind: 'keys-then-agent', keyPaths: [path.join(dir, 'k')] }, knownHostKeys: [hostFp],
+    });
+    expect(conn.closed).toBe(false);
+    clients[0]!.end();
+    await expect.poll(() => conn.closed, { timeout: 5000 }).toBe(true);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
 });

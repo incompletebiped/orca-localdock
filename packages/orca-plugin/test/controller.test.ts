@@ -469,6 +469,29 @@ describe('LocalDockController', () => {
     expect(s).not.toMatchObject({ ddev: { status: 'docker-not-running' } });
   });
 
+  it('reconnects when the cached connection dropped since the last step', async () => {
+    host.project = { path: dir, name: 'p' };
+    host.hosts = [{ id: 'h1', label: 'x', host: 'server.example.com', port: 22, username: 'root', connected: true }];
+    await writeSiteState(dir, {
+      version: 1, hostId: 'h1', account: 'exampleco', domain: 'example.com', docroot: '/home/exampleco/public_html',
+      productionUrl: 'https://example.com', tablePrefix: 'wp_', pulledAt: new Date().toISOString(), files: {},
+    });
+    await ctl.dispatch({ type: 'refresh' });
+    let opened = 0;
+    let dropped = false;
+    host.openSession = async () => {
+      opened++;
+      const s = fakeServerSession();
+      return { ...s, get closed() { return dropped; } };
+    };
+    await ctl.dispatch({ type: 'scan-changes' });
+    await ctl.dispatch({ type: 'scan-changes' });
+    expect(opened).toBe(1);
+    dropped = true;
+    await ctl.dispatch({ type: 'scan-changes' });
+    expect(opened).toBe(2);
+  });
+
   it('drops the "wait for this job" notice once the job ends', async () => {
     host.project = { path: dir, name: 'p' };
     host.hosts = [{ id: 'h1', label: 'x', host: 'server.example.com', port: 22, username: 'root', connected: true }];

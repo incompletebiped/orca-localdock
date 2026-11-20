@@ -43,12 +43,23 @@ export interface ConnectOptions {
  */
 export class SshConnection implements RemoteShell {
   private sftpSession: SFTPWrapper | undefined;
+  private ended = false;
   private constructor(
     private readonly client: Client,
     readonly target: SshTarget,
     readonly hostKeyFingerprint: string,
     private readonly log: Logger,
-  ) {}
+  ) {
+    // A connection that drops later (network change, server restart, idle timeout) must not
+    // crash the process with an unhandled 'error', and callers need to know to reconnect.
+    client.on('error', (err) => log.warn(`Connection to ${target.host}: ${err.message}`));
+    client.on('close', () => (this.ended = true));
+  }
+
+  /** True once the connection has dropped or been closed; open a new one. */
+  get closed(): boolean {
+    return this.ended;
+  }
 
   static async connect(target: SshTarget, options: ConnectOptions = {}): Promise<SshConnection> {
     const log = (options.logger ?? silentLogger).child('ssh');
@@ -109,9 +120,11 @@ export class SshConnection implements RemoteShell {
     };
 
     const client = new Client();
-    await new Promise<void>((resolve, reject) => {
+    const connecting = new Promise<void>((resolve, reject) => {
       client.once('ready', () => resolve());
-      client.once('error', (err) => {
+      // `on`, not `once`: ssh2 can emit more than one error while a login fails (one per auth
+      // method), and an 'error' with no listener is thrown as an uncaught exception.
+      client.on('error', (err) => {
         if (seen && target.knownHostKeys && !target.knownHostKeys.includes(seen)) {
           const how = target.trustCommand ? `Connect once with "${target.trustCommand}" in a terminal` : 'Connect once with ssh in a terminal';
           reject(
@@ -153,7 +166,15 @@ export class SshConnection implements RemoteShell {
       });
       client.connect(config);
     });
+    try {
+      await connecting;
+    } catch (err) {
+      // Don't leave a half-open socket behind; the 'error' listener stays for anything it still emits.
+      client.end();
+      throw err;
+    }
 
+    client.removeAllListeners('error');
     log.info(`Connected to ${target.username}@${target.host}:${target.port}`);
     return new SshConnection(client, target, seen!, log);
   }
@@ -219,6 +240,7 @@ export class SshConnection implements RemoteShell {
   }
 
   close(): void {
+    this.ended = true;
     this.sftpSession?.end();
     this.client.end();
     this.log.debug(`Disconnected from ${this.target.host}`);

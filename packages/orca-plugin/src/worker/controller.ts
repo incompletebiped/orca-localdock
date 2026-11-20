@@ -354,6 +354,11 @@ export class LocalDockController {
 
   private async session(hostId: string) {
     let entry = this.sessions.get(hostId);
+    if (entry?.session.closed) {
+      // The connection dropped since the last step (sleep, network change, server restart): reconnect.
+      this.sessions.delete(hostId);
+      entry = undefined;
+    }
     if (!entry) {
       const host = await this.requireHost(hostId);
       const session = await this.deps.host.openSession(hostId);
