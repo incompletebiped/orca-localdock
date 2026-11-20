@@ -19,6 +19,8 @@ export interface RemoteFile {
  * One round trip instead of one SFTP readdir per directory. Exclusions are
  * applied here, so they behave exactly like everywhere else.
  */
+const MAX_LISTING_BYTES = 256 * 1024 * 1024;
+
 export async function listRemoteFiles(
   shell: RemoteShell,
   docroot: string,
@@ -27,8 +29,12 @@ export async function listRemoteFiles(
 ): Promise<Map<string, RemoteFile>> {
   const root = assertSafeRemoteDir(docroot);
   const chunks: Buffer[] = [];
+  let size = 0;
   const sink = new Writable({
     write(chunk: Buffer, _enc, done) {
+      size += chunk.length;
+      // About two million files' worth of listing; past that it's not a WordPress site, or not a sane one.
+      if (size > MAX_LISTING_BYTES) return done(new LocalDockError('The server file list is too large to handle', 'REMOTE_COMMAND_FAILED'));
       chunks.push(chunk);
       done();
     },

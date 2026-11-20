@@ -8,6 +8,9 @@ import { LocalDockError, normalizeError } from '../errors.js';
 import { silentLogger, registerSecret, type Logger } from '../log.js';
 import type { ExecOptions, ExecResult, RemoteEntry, RemoteFs, RemoteShell, RemoteStat, SshTarget } from './types.js';
 
+/** Command output LocalDock keeps in memory, per stream. */
+const MAX_BUFFERED_OUTPUT = 64 * 1024 * 1024;
+
 const S_IFMT = 0o170000;
 const S_IFDIR = 0o040000;
 const S_IFREG = 0o100000;
@@ -195,12 +198,28 @@ export class SshConnection implements RemoteShell {
         };
         options.signal?.addEventListener('abort', onAbort, { once: true });
 
+        // Output held in memory is capped, so a hostile or broken server can't exhaust it.
+        const tooMuch = (what: string) => {
+          stream.close();
+          reject(new LocalDockError(`The server sent more ${what} than LocalDock accepts`, 'REMOTE_COMMAND_FAILED'));
+        };
         if (options.stdout) {
           stream.pipe(options.stdout, { end: false });
+          // A destination that gives up (e.g. it hit its own limit) ends the command instead of stalling it.
+          options.stdout.once('error', (e) => {
+            stream.close();
+            reject(e instanceof LocalDockError ? e : normalizeError(e));
+          });
         } else {
-          stream.on('data', (d: Buffer) => (stdout += d.toString('utf-8')));
+          stream.on('data', (d: Buffer) => {
+            stdout += d.toString('utf-8');
+            if (stdout.length > MAX_BUFFERED_OUTPUT) tooMuch('output');
+          });
         }
-        stream.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf-8')));
+        stream.stderr.on('data', (d: Buffer) => {
+          stderr += d.toString('utf-8');
+          if (stderr.length > MAX_BUFFERED_OUTPUT) tooMuch('error output');
+        });
         stream.on('error', (e: Error) => reject(normalizeError(e)));
         stream.on('close', (code: number | null) => {
           options.signal?.removeEventListener('abort', onAbort);

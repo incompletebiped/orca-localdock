@@ -62,7 +62,7 @@ export async function downloadArchive(
   const parser = new Parser({ strict: true });
   parser.on('entry', (entry: ReadEntry) => {
     current = entry;
-    const rel = entry.path;
+    const rel = entry.path.replace(/^\.\//, '');
     const meta = pending.get(rel);
     if (!meta || !REGULAR.has(entry.type)) {
       entry.resume();
@@ -92,7 +92,9 @@ export async function downloadArchive(
 
   // --ignore-failed-read: a file deleted or unreadable since listing is skipped, not fatal (reported below).
   const command = `cd ${shq(root)} && tar -czf - --null --no-recursion --ignore-failed-read -T -`;
-  const list = [...wanted.keys()].map((rel) => `${rel}\0`).join('');
+  // Every name starts with ./ so none can be read as a tar option (GNU tar before 1.29 does that with
+  // names like --directory=/root even after --null). The ./ comes back in the archive and is stripped.
+  const list = [...wanted.keys()].map((rel) => `./${rel}\0`).join('');
   try {
     const res = await shell.exec(command, { stdin: list, stdout: parser as unknown as Writable, signal: options.signal });
     // GNU tar: 0 = fine, 1 = some file changed while it was read (still archived), 2+ = failure.

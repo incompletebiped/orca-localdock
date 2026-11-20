@@ -19,7 +19,8 @@ async function archive(files: Record<string, string | Buffer>): Promise<Buffer> 
     await fs.writeFile(path.join(src, rel), content);
   }
   const chunks: Buffer[] = [];
-  for await (const chunk of create({ gzip: true, cwd: src, portable: true }, Object.keys(files)) as AsyncIterable<Buffer>) chunks.push(chunk);
+  // GNU tar keeps the ./ the name list starts each name with.
+  for await (const chunk of create({ gzip: true, cwd: src, portable: true }, Object.keys(files).map((f) => `./${f}`)) as AsyncIterable<Buffer>) chunks.push(chunk);
   await fs.rm(src, { recursive: true, force: true });
   return Buffer.concat(chunks);
 }
@@ -73,7 +74,8 @@ describe('downloadArchive', () => {
     });
 
     expect(seen.command).toBe(`cd '/home/acct/public_html' && tar -czf - --null --no-recursion --ignore-failed-read -T -`);
-    expect(seen.stdin).toBe(['index.php', 'wp-content/themes/t/style.css', 'wp-content/big.bin', 'gone.php'].map((p) => p + '\0').join(''));
+    // Each name starts with ./, so a file named like a tar option can't be read as one.
+    expect(seen.stdin).toBe(['index.php', 'wp-content/themes/t/style.css', 'wp-content/big.bin', 'gone.php'].map((p) => `./${p}\0`).join(''));
     // wp-config.php was in the archive but not asked for, so it isn't written.
     expect(await listAll(dir)).toEqual(['index.php', 'wp-content/big.bin', 'wp-content/themes/t/style.css']);
     expect(res.files['index.php']).toMatchObject({ hash: sha1('<?php'), size: 5, remoteMtime: 111 });
