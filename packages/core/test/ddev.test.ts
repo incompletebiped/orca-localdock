@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { Ddev, ddevEnv, ddevInstallLocations, dockerDesktopLocations, normalizeStatus } from '../src/ddev/Ddev.js';
-import { processRunner, type CommandRunner, type RunResult } from '../src/ddev/runner.js';
+import { processRunner, resolveProgram, type CommandRunner, type RunResult } from '../src/ddev/runner.js';
 import { devMuPlugin, localWpConfig, sanitizeHtaccess, uploadsProxyHtaccess } from '../src/ddev/templates.js';
 import { phpVersionFromHtaccess } from '../src/operations/site.js';
 import { PathMatcher } from '../src/util/glob.js';
@@ -114,6 +114,37 @@ describe('projects on drives Docker Desktop doesn’t mount', () => {
     await ddev.start('E:\\sites\\example');
     expect(calls.map((c) => c.args[0])).toEqual(['-d', 'start']);
     expect(await ddev.shareProjectDrive('\\\\server\\share\\site')).toBe(true);
+  });
+});
+
+describe('finding programs without trusting the project folder', () => {
+  it('finds a bare name only in absolute PATH folders, never in the working folder', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-path-'));
+    const project = path.join(root, 'project');
+    const bin = path.join(root, 'bin');
+    await fs.mkdir(project);
+    await fs.mkdir(bin);
+    await fs.writeFile(path.join(project, 'ddev.exe'), 'planted by the server');
+    await fs.writeFile(path.join(project, 'ddev'), 'planted by the server');
+    const cwd = process.cwd();
+    process.chdir(project);
+    try {
+      // Only the planted copy exists, reachable through the cwd or a relative PATH entry: not found.
+      expect(resolveProgram('ddev', { PATH: ['.', '', 'project'].join(';') }, 'win32')).toBeNull();
+      expect(resolveProgram('ddev', { PATH: '.:' }, 'linux')).toBeNull();
+      await fs.writeFile(path.join(bin, 'ddev.exe'), 'real');
+      await fs.writeFile(path.join(bin, 'ddev'), 'real');
+      expect(resolveProgram('ddev', { Path: `.;${bin}` }, 'win32')).toBe(path.win32.join(bin, 'ddev.exe'));
+      if (process.platform !== 'win32') expect(resolveProgram('ddev', { PATH: `.:${bin}` }, 'linux')).toBe(path.posix.join(bin, 'ddev'));
+      expect(resolveProgram('C:\\Tools\\ddev.exe', {}, 'win32')).toBe('C:\\Tools\\ddev.exe');
+    } finally {
+      process.chdir(cwd);
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a program that is not installed as exit 127 without running anything', async () => {
+    expect(await processRunner.run('localdock-no-such-program', [], { env: { PATH: os.tmpdir() } })).toMatchObject({ code: 127 });
   });
 });
 
