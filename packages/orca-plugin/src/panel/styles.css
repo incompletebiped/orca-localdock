@@ -55,6 +55,7 @@ code { font-size: 12px; word-break: break-all; }
 
 .empty { padding: 20px 4px; }
 .empty .btn { margin-top: 8px; }
+.empty .btn + .btn { margin-left: 6px; }
 .gaps { padding-left: 18px; }
 .gaps li { margin: 6px 0; }
 
