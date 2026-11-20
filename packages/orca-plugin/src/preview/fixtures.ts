@@ -58,6 +58,29 @@ export const FIXTURES: Record<string, PanelState> = {
     },
     dbGroups: null,
   },
+  'Source control (pulling)': {
+    ...base,
+    view: 'tracking',
+    job: { title: 'Pulling files', message: 'Downloading 2 files… 1.2 MB of 3.4 MB', current: 1_200_000, total: 3_400_000, cancellable: true },
+    site: {
+      domain: 'example.com',
+      productionUrl: 'https://example.com',
+      account: 'exampleco',
+      hostId: 'h1',
+      hostLabel: 'Example cPanel server',
+      pulledAt: new Date(Date.now() - 3 * 3600_000).toISOString(),
+    },
+    ddev: { status: 'running', url: 'https://example-com.ddev.site', mailpitUrl: 'https://example-com.ddev.site:8026' },
+    changes: {
+      serverCheckedAt: new Date(Date.now() - 60_000).toISOString(),
+      rows: [
+        { path: 'wp-content/themes/example-child/style.css', local: 'modified', remote: 'unchanged', direction: 'push' },
+        { path: 'wp-content/plugins/contact-form-7/readme.txt', local: 'unchanged', remote: 'modified', direction: 'pull', syncing: true },
+        { path: 'wp-content/plugins/old-plugin/old.php', local: 'unchanged', remote: 'deleted', direction: 'pull', syncing: true },
+      ],
+    },
+    dbGroups: null,
+  },
   'Source control (stopped, DB open)': {
     ...base,
     view: 'tracking',

@@ -35,7 +35,12 @@ export async function downloadArchive(
   docroot: string,
   siteDir: string,
   wanted: ReadonlyMap<string, RemoteFile>,
-  options: { signal?: AbortSignal; onProgress?: (bytes: number, totalBytes: number) => void } = {},
+  options: {
+    signal?: AbortSignal;
+    onProgress?: (bytes: number, totalBytes: number) => void;
+    /** Called as each file lands in the site folder. */
+    onFile?: (rel: string) => void;
+  } = {},
 ): Promise<ArchiveDownload> {
   const root = assertSafeRemoteDir(docroot);
   const result: ArchiveDownload = { files: {}, failed: [] };
@@ -72,6 +77,7 @@ export async function downloadArchive(
         async ({ hash, file }) => {
           const st = await fs.stat(file);
           result.files[rel] = { hash, size: st.size, remoteMtime: meta.mtime, localMtimeMs: st.mtimeMs };
+          options.onFile?.(rel);
         },
         (err: unknown) => {
           result.failed.push({ path: rel, error: err instanceof Error ? err.message : String(err) });

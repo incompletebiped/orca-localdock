@@ -40,6 +40,8 @@ export interface ChangeRow {
   local: SideChange;
   remote: SideChange;
   direction: Direction;
+  /** Queued in the push or pull that's running; the row goes away once its file is through. */
+  syncing?: boolean;
 }
 
 export type DdevStatus = 'not-installed' | 'docker-not-running' | 'not-configured' | 'stopped' | 'starting' | 'running' | 'paused' | 'unhealthy' | 'unknown';

@@ -35,6 +35,7 @@ import { GAPS, isOrcaApiPending } from '../shared/gaps.js';
 import { panelActionSchema } from '../shared/actionSchema.js';
 import {
   linkUrl,
+  type ChangeRow,
   type DdevInfo,
   type HostSummary,
   type Job,
@@ -59,6 +60,8 @@ export interface ControllerDeps {
 }
 
 const HOST_LABELS_KEY = 'hostLabels';
+/** How often finished files are taken out of the change list during a push or pull. */
+const SYNC_ROWS_MS = 300;
 
 /** How notices name the steps that need the server. */
 const STEP_NAMES: Partial<Record<string, string>> = {
@@ -96,6 +99,8 @@ export class LocalDockController {
   private noticeEntry: { notice: Notice; dir: string | null } | null = null;
   /** Starts at the clock, so a restarted worker's states still count as newer than the last one the panel saw. */
   private revision = Date.now();
+  /** The "wait for the running job" notice, cleared when that job ends. */
+  private waitNotice: Notice | null = null;
   private abort: AbortController | null = null;
   private readonly sessions = new Map<string, { session: RemoteSession; asRoot: boolean; username: string }>();
   private discovered: { hostId: string; sites: DiscoveredSite[] } | null = null;
@@ -173,7 +178,8 @@ export class LocalDockController {
       return this.state();
     }
     if (this.job && action.type !== 'refresh') {
-      this.setNotice({ kind: 'info', text: `Wait for "${this.job.title}" to finish.` });
+      this.waitNotice = { kind: 'info', text: `Wait for "${this.job.title}" to finish.` };
+      this.setNotice(this.waitNotice);
       return this.state();
     }
     // Only a refresh can run alongside a job; it must leave that job (and its cancel handle) alone.
@@ -184,6 +190,9 @@ export class LocalDockController {
       this.fail(err, action.type);
     } finally {
       if (ownsJob && this.job) {
+        // "Wait for this job" means nothing once it's done.
+        if (this.noticeEntry?.notice === this.waitNotice) this.noticeEntry = null;
+        this.waitNotice = null;
         this.job = null;
         this.jobHome = null;
         this.abort = null;
@@ -546,7 +555,14 @@ export class LocalDockController {
 
   private async syncFiles(direction: 'push' | 'pull', paths: string[], allowConflicts: boolean): Promise<void> {
     await this.tracked(direction === 'push' ? 'Pushing files' : 'Pulling files', true, async (ctx, dir) => {
-      const r = direction === 'push' ? await pushFiles(ctx, dir, paths, { allowConflicts }) : await pullFiles(ctx, dir, paths, { allowConflicts });
+      const rows = this.syncingRows(dir, paths);
+      let r;
+      try {
+        const onFile = (p: string) => rows.done(p);
+        r = direction === 'push' ? await pushFiles(ctx, dir, paths, { allowConflicts, onFile }) : await pullFiles(ctx, dir, paths, { allowConflicts, onFile });
+      } finally {
+        rows.stop();
+      }
       const verb = direction === 'push' ? 'Uploaded' : 'Downloaded';
       this.notice = r.failed.length
         ? { kind: 'error', text: `${verb} ${r.transferred.length}, removed ${r.deleted.length}; ${r.failed.length} failed (${r.failed[0]!.path}: ${r.failed[0]!.error}).` }
@@ -556,6 +572,43 @@ export class LocalDockController {
       this.serverChecks++;
       await this.updateLocalChanges(dir);
     });
+  }
+
+  /**
+   * Show a push or pull happening in the change list: its rows are marked as queued, and each one leaves the
+   * list as its file goes through. Publishing is batched, since a pull can land hundreds of files a second.
+   */
+  private syncingRows(dir: string, paths: string[]): { done: (path: string) => void; stop: () => void } {
+    const queued = new Set(paths);
+    const finished = new Set<string>();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const update = (keep: (row: ChangeRow) => ChangeRow | null) => {
+      if (this.view.view !== 'tracking' || !this.view.changes || !this.here(dir)) return;
+      const rows = this.view.changes.rows.flatMap((row) => keep(row) ?? []);
+      this.view = { ...this.view, changes: { ...this.view.changes, rows } };
+      this.emit();
+    };
+    const flush = () => {
+      timer = undefined;
+      if (finished.size === 0) return;
+      const gone = new Set(finished);
+      finished.clear();
+      update((row) => (gone.has(row.path) ? null : row));
+    };
+    update((row) => (queued.has(row.path) ? { ...row, syncing: true } : row));
+    return {
+      done: (p) => {
+        if (!queued.has(p)) return;
+        finished.add(p);
+        timer ??= setTimeout(flush, SYNC_ROWS_MS);
+      },
+      stop: () => {
+        clearTimeout(timer);
+        flush();
+        // Whatever is left (failed, or cancelled) is back to a plain change.
+        update(({ syncing: _, ...row }) => row);
+      },
+    };
   }
 
   private async startStop(which: 'start' | 'stop'): Promise<void> {

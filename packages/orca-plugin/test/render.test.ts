@@ -67,6 +67,21 @@ describe('panel rendering', () => {
     expect(render(FIXTURES['Source control']!, ui)).toContain('data-confirm="yes"');
   });
 
+  it('greys out the change lists while a job runs and marks the files being synced', () => {
+    const html = render(FIXTURES['Source control (pulling)']!, newUiState());
+    expect(html).toContain('changes-busy');
+    expect(html).toMatch(/pull-files[^>]*disabled/);
+    expect(html).toMatch(/data-select="wp-content\/themes\/example-child\/style\.css" disabled/);
+    expect(html.match(/change-syncing/g)).toHaveLength(2);
+    expect(html).toContain('↓');
+  });
+
+  it("puts a section's buttons above its file list", () => {
+    const html = render(FIXTURES['Source control']!, newUiState());
+    const server = html.slice(html.indexOf('Server changes'));
+    expect(server.indexOf('Pull all')).toBeLessThan(server.indexOf('<li class="change'));
+  });
+
   it('escapes the basics', () => {
     expect(esc(`<a href="x">'&'</a>`)).toBe('&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;');
   });

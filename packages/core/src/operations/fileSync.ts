@@ -31,11 +31,16 @@ export async function requireState(siteDir: string): Promise<SiteState> {
  * Compare local and live against the sync baseline. Only files whose stat
  * changed get hashed: local files are read, remote files are hashed with
  * sha1sum over SSH.
+ *
+ * With `only`, just those paths are hashed on the server (a push or pull of
+ * a few files shouldn't re-check thousands of others). The result is then only
+ * meaningful for those paths, so the server snapshot isn't saved.
  */
 export async function computeSiteChanges(
   ctx: OperationContext,
   siteDir: string,
   exclude: ExcludeOptions = {},
+  options: { only?: readonly string[] } = {},
 ): Promise<SiteChanges> {
   const state = await requireState(siteDir);
   const matcher = new PathMatcher(excludePatterns(exclude));
@@ -45,7 +50,8 @@ export async function computeSiteChanges(
 
   ctx.progress({ phase: 'scan', message: 'Scanning server files…' });
   const remote = await listRemoteFiles(ctx.shell, state.docroot, matcher, { signal: ctx.signal });
-  const toHash = reuseBaselineHashes(remote, state.files);
+  const only = options.only ? new Set(options.only.map(normalizeRelPath)) : null;
+  const toHash = reuseBaselineHashes(remote, state.files).filter((p) => !only || only.has(p));
   if (toHash.length > 0) {
     ctx.progress({ phase: 'scan', message: `Checking ${toHash.length} changed server file(s)…`, current: 0, total: toHash.length });
     const hashes = await hashRemoteFiles(ctx.shell, state.docroot, toHash, {
@@ -73,7 +79,7 @@ export async function computeSiteChanges(
     new Map([...local].map(([p, f]) => [p, f.hash])),
     remoteHashes,
   );
-  await writeServerSnapshot(siteDir, { checkedAt: new Date().toISOString(), changed: serverDifferences(state.files, remoteHashes) });
+  if (!only) await writeServerSnapshot(siteDir, { checkedAt: new Date().toISOString(), changed: serverDifferences(state.files, remoteHashes) });
   return { state, entries, local, remote };
 }
 
@@ -144,9 +150,9 @@ export async function pushFiles(
   ctx: OperationContext,
   siteDir: string,
   paths: readonly string[],
-  options: { allowConflicts?: boolean; exclude?: ExcludeOptions; account?: string } = {},
+  options: { allowConflicts?: boolean; exclude?: ExcludeOptions; account?: string; onFile?: (path: string) => void } = {},
 ): Promise<SyncResult> {
-  const changes = await computeSiteChanges(ctx, siteDir, options.exclude);
+  const changes = await computeSiteChanges(ctx, siteDir, options.exclude, { only: paths });
   const { state } = changes;
   const docroot = assertSafeRemoteDir(state.docroot);
   const selected = selectEntries(changes, paths, 'push', options.allowConflicts ?? false);
@@ -180,6 +186,7 @@ export async function pushFiles(
           localMtimeMs: lst.mtimeMs,
         };
         result.transferred.push(e.path);
+        options.onFile?.(e.path);
         tick('Uploading');
       },
       ctx.signal,
@@ -191,6 +198,7 @@ export async function pushFiles(
         await ctx.sftp.unlink(remoteJoin(docroot, e.path));
         delete state.files[e.path];
         result.deleted.push(e.path);
+        options.onFile?.(e.path);
         tick('Deleting');
       },
       ctx.signal,
@@ -232,9 +240,9 @@ export async function pullFiles(
   ctx: OperationContext,
   siteDir: string,
   paths: readonly string[],
-  options: { allowConflicts?: boolean; exclude?: ExcludeOptions } = {},
+  options: { allowConflicts?: boolean; exclude?: ExcludeOptions; onFile?: (path: string) => void } = {},
 ): Promise<SyncResult> {
-  const changes = await computeSiteChanges(ctx, siteDir, options.exclude);
+  const changes = await computeSiteChanges(ctx, siteDir, options.exclude, { only: paths });
   const { state } = changes;
   const docroot = assertSafeRemoteDir(state.docroot);
   const selected = selectEntries(changes, paths, 'pull', options.allowConflicts ?? false);
@@ -245,7 +253,7 @@ export async function pullFiles(
   const tick = (verb: string) => ctx.progress({ phase: 'files', message: `${verb}… (${++done}/${deletes.length})`, current: done, total: deletes.length });
 
   try {
-    const down = await downloadFiles(ctx, siteDir, docroot, new Map(downloads.map((e) => [e.path, changes.remote.get(e.path)!])));
+    const down = await downloadFiles(ctx, siteDir, docroot, new Map(downloads.map((e) => [e.path, changes.remote.get(e.path)!])), options.onFile);
     Object.assign(state.files, down.files);
     result.transferred.push(...Object.keys(down.files));
     result.failed.push(...down.failed);
@@ -256,6 +264,7 @@ export async function pullFiles(
         await fs.rm(localJoin(siteDir, e.path), { force: true });
         delete state.files[e.path];
         result.deleted.push(e.path);
+        options.onFile?.(e.path);
         tick('Removing');
       },
       ctx.signal,
@@ -271,11 +280,18 @@ export async function pullFiles(
 }
 
 /** Download server files in one archive stream, reporting progress in bytes. */
-export function downloadFiles(ctx: OperationContext, siteDir: string, docroot: string, files: ReadonlyMap<string, RemoteFile>): Promise<ArchiveDownload> {
+export function downloadFiles(
+  ctx: OperationContext,
+  siteDir: string,
+  docroot: string,
+  files: ReadonlyMap<string, RemoteFile>,
+  onFile?: (rel: string) => void,
+): Promise<ArchiveDownload> {
   const count = `${files.size} file${files.size === 1 ? '' : 's'}`;
   ctx.progress({ phase: 'files', message: `Downloading ${count}…` });
   return downloadArchive(ctx.shell, docroot, siteDir, files, {
     signal: ctx.signal,
+    onFile,
     onProgress: (bytes, total) =>
       ctx.progress({ phase: 'files', message: `Downloading ${count}… ${formatBytes(bytes)} of ${formatBytes(total)}`, current: bytes, total }),
   });

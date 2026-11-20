@@ -257,4 +257,31 @@ describe('change list without connecting', () => {
     expect(hashed).toEqual(['wp-content/themes/x/functions.php']);
     await fs.rm(dir, { recursive: true, force: true });
   });
+
+  it('hashes only the files being pushed or pulled, and leaves the last full check alone', async () => {
+    const { dir, baseline } = await site();
+    const Z = String.fromCharCode(0);
+    const paths = Object.keys(baseline);
+    // Every server file changed its mtime, so a full check would hash them all.
+    const hashCalls: string[][] = [];
+    const shell: RemoteShell = {
+      exec: async (cmd, opts): Promise<ExecResult> => {
+        if (cmd.includes('find .')) {
+          opts!.stdout!.write(Buffer.from(paths.map((rel) => [rel, baseline[rel]!.size, 900].join(Z) + Z).join('')));
+          return { code: 0, stdout: '', stderr: '' };
+        }
+        const batch = paths.filter((rel) => cmd.includes(rel));
+        hashCalls.push(batch);
+        return { code: 0, stderr: '', stdout: batch.map((rel) => (rel === 'index.php' ? 'e'.repeat(40) : baseline[rel]!.hash) + '\n').join('') };
+      },
+    };
+    const ctx = { shell, logger: silentLogger, progress: () => {} } as unknown as OperationContext;
+    await writeServerSnapshot(dir, { checkedAt: '2026-10-09T12:00:00.000Z', changed: {} });
+
+    const r = await computeSiteChanges(ctx, dir, {}, { only: ['index.php'] });
+    expect(hashCalls.flat()).toEqual(['index.php']);
+    expect(r.entries.find((e) => e.path === 'index.php')).toMatchObject({ remote: 'modified', direction: 'pull' });
+    expect((await localSiteChanges(dir)).serverCheckedAt).toBe('2026-10-09T12:00:00.000Z');
+    await fs.rm(dir, { recursive: true, force: true });
+  });
 });

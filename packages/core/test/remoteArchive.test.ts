@@ -66,7 +66,11 @@ describe('downloadArchive', () => {
       ['gone.php', meta(3)],
     ]);
     const progress: Array<[number, number]> = [];
-    const res = await downloadArchive(shell, '/home/acct/public_html/', dir, wanted, { onProgress: (b, t) => progress.push([b, t]) });
+    const landed: string[] = [];
+    const res = await downloadArchive(shell, '/home/acct/public_html/', dir, wanted, {
+      onProgress: (b, t) => progress.push([b, t]),
+      onFile: (rel) => landed.push(rel),
+    });
 
     expect(seen.command).toBe(`cd '/home/acct/public_html' && tar -czf - --null --no-recursion --ignore-failed-read -T -`);
     expect(seen.stdin).toBe(['index.php', 'wp-content/themes/t/style.css', 'wp-content/big.bin', 'gone.php'].map((p) => p + '\0').join(''));
@@ -76,6 +80,8 @@ describe('downloadArchive', () => {
     expect(res.files['wp-content/big.bin']!.hash).toBe(sha1(big));
     expect(res.failed).toEqual([{ path: 'gone.php', error: expect.stringMatching(/Not in the server archive/) }]);
     expect(progress.at(-1)).toEqual([5 + 6 + big.length, 5 + 6 + big.length + 3]);
+    // Reported as each file lands; the missing one never does.
+    expect(landed.sort()).toEqual(['index.php', 'wp-content/big.bin', 'wp-content/themes/t/style.css']);
     await fs.rm(dir, { recursive: true, force: true });
   });
 

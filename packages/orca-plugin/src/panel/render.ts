@@ -164,25 +164,29 @@ function renderSites(host: HostSummary, sites: SiteSummary[], projectEmpty: bool
 }
 
 const LETTER: Record<SideChange, string> = { added: 'A', modified: 'M', deleted: 'D', unchanged: '' };
+const SYNC_ARROW: Record<ChangeRow['direction'], string> = { push: '↑', pull: '↓', conflict: '⇅', same: '' };
 
-function changeList(rows: ChangeRow[], side: 'local' | 'remote', ui: UiState): string {
-  return `<ul class="changes">${rows
+function changeList(rows: ChangeRow[], side: 'local' | 'remote', ui: UiState, busy: boolean): string {
+  return `<ul class="changes${busy ? ' changes-busy' : ''}">${rows
     .map((r) => {
       const change = r[side];
       const name = r.path.split('/').pop() ?? r.path;
       const dir = r.path.slice(0, r.path.length - name.length).replace(/\/$/, '');
-      return `<li class="change" title="${esc(r.path)}">
-        <input type="checkbox" data-select="${esc(r.path)}"${ui.selected.has(r.path) ? ' checked' : ''} aria-label="Select ${esc(r.path)}">
+      // A queued row shows which way it's going; it leaves the list once its file is through.
+      const mark = r.syncing ? `<span class="syncing" aria-label="Syncing">${SYNC_ARROW[r.direction]}</span>` : '';
+      return `<li class="change${r.syncing ? ' change-syncing' : ''}" title="${esc(r.path)}">
+        <input type="checkbox" data-select="${esc(r.path)}"${ui.selected.has(r.path) ? ' checked' : ''}${busy ? ' disabled' : ''} aria-label="Select ${esc(r.path)}">
         <span class="name">${esc(name)}</span><span class="dir muted">${esc(dir)}</span>
-        <span class="letter letter-${esc(change)}">${LETTER[change]}</span>
+        ${mark}<span class="letter letter-${esc(change)}">${LETTER[change]}</span>
       </li>`;
     })
     .join('')}</ul>`;
 }
 
+/** A change list. Its buttons go above the rows, so they stay in reach when the list is long. */
 function section(title: string, count: number, body: string, actions: string): string {
   return `<details class="section" open><summary><span class="grow">${esc(title)}</span><span class="badge">${count}</span></summary>
-    ${count ? `${body}<div class="section-actions">${actions}</div>` : `<p class="muted small pad">Nothing here.</p>`}</details>`;
+    ${count ? `<div class="section-actions">${actions}</div>${body}` : `<p class="muted small pad">Nothing here.</p>`}</details>`;
 }
 
 function renderTracking(state: Extract<PanelState, { view: 'tracking' }>, ui: UiState): string {
@@ -221,13 +225,13 @@ function renderTracking(state: Extract<PanelState, { view: 'tracking' }>, ui: Ui
 
   const changeSections = changes
     ? [
-        section('Local changes', push.length, changeList(push, 'local', ui),
+        section('Local changes', push.length, changeList(push, 'local', ui, busy),
           button('Push selected', { type: 'push-files', paths: selectedOf(push) }, { primary: true, ...server(busy || selectedOf(push).length === 0) }) +
           button('Push all', { type: 'push-files', paths: allOf(push) }, server(busy))),
-        section('Server changes', pull.length, changeList(pull, 'remote', ui),
+        section('Server changes', pull.length, changeList(pull, 'remote', ui, busy),
           button('Pull selected', { type: 'pull-files', paths: selectedOf(pull) }, server(busy || selectedOf(pull).length === 0)) +
           button('Pull all', { type: 'pull-files', paths: allOf(pull) }, server(busy))),
-        section('Changed on both sides', conflicts.length, changeList(conflicts, 'local', ui),
+        section('Changed on both sides', conflicts.length, changeList(conflicts, 'local', ui, busy),
           button('Keep local (push)', { type: 'push-files', paths: selectedOf(conflicts), allowConflicts: true }, { danger: true, ...server(busy || selectedOf(conflicts).length === 0) }) +
           button('Take server (pull)', { type: 'pull-files', paths: selectedOf(conflicts), allowConflicts: true }, { danger: true, ...server(busy || selectedOf(conflicts).length === 0) })),
       ].join('')

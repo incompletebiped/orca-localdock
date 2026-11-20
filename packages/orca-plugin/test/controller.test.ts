@@ -469,6 +469,43 @@ describe('LocalDockController', () => {
     expect(s).not.toMatchObject({ ddev: { status: 'docker-not-running' } });
   });
 
+  it('drops the "wait for this job" notice once the job ends', async () => {
+    host.project = { path: dir, name: 'p' };
+    host.hosts = [{ id: 'h1', label: 'x', host: 'server.example.com', port: 22, username: 'root', connected: true }];
+    await writeSiteState(dir, {
+      version: 1, hostId: 'h1', account: 'exampleco', domain: 'example.com', docroot: '/home/exampleco/public_html',
+      productionUrl: 'https://example.com', tablePrefix: 'wp_', pulledAt: new Date().toISOString(), files: {},
+    });
+    await ctl.dispatch({ type: 'refresh' });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    host.openSession = async () => {
+      await gate;
+      throw new LocalDockError('server unreachable in this test', 'UNKNOWN', false);
+    };
+    const running = ctl.dispatch({ type: 'scan-changes' });
+    await vi.waitFor(() => expect(ctl.state().job).not.toBeNull());
+    expect((await ctl.dispatch({ type: 'pull-db' })).notice?.text).toMatch(/^Wait for "Checking for changes"/);
+    release();
+    await running;
+    expect(ctl.state().notice?.text).toBe('server unreachable in this test');
+
+    // A wait notice that nothing replaced is cleared too.
+    let release2!: () => void;
+    const gate2 = new Promise<void>((r) => (release2 = r));
+    host.openSession = async () => {
+      await gate2;
+      return fakeServerSession();
+    };
+    await ctl.dispatch({ type: 'dismiss-notice' });
+    const job = ctl.dispatch({ type: 'start-docker' });
+    await vi.waitFor(() => expect(ctl.state().job).not.toBeNull());
+    expect((await ctl.dispatch({ type: 'stop' })).notice?.text).toMatch(/^Wait for/);
+    release2();
+    await job;
+    expect(ctl.state().notice?.text ?? '').not.toMatch(/^Wait for/);
+  });
+
   it('rejects malformed actions without running anything', async () => {
     const s = await ctl.dispatch({ type: 'push-files', paths: [] });
     expect(s.notice).toMatchObject({ kind: 'error' });

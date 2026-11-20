@@ -1,3 +1,4 @@
+import { partialGroups } from '../shared/groups.js';
 import { linkUrl, type OpenLink, type PanelActionInput, type PanelState } from '../shared/protocol.js';
 import { BridgeUnavailableError, type PanelBridge } from './bridge.js';
 import { newUiState, render, type UiState } from './render.js';
@@ -70,10 +71,19 @@ export function mountPanel(root: HTMLElement, bridge: PanelBridge): void {
   const confirmText = (action: PanelActionInput): string | null => {
     if (action.type === 'push-db') return 'Overwrite the selected tables on the LIVE site? A backup is taken first.';
     if (action.type === 'rollback-db') return 'Restore the live database to the backup taken before the last push?';
+    const texts: string[] = [];
     if ((action.type === 'push-files' || action.type === 'pull-files') && action.allowConflicts) {
-      return 'These files changed on both sides. Overwrite the other side’s version?';
+      texts.push('These files changed on both sides. Overwrite the other side’s version?');
     }
-    return null;
+    if (action.type === 'pull-files' && state.view === 'tracking') {
+      const pullable = (state.changes?.rows ?? []).filter((r) => r.direction === 'pull' || r.direction === 'conflict').map((r) => r.path);
+      const partial = partialGroups(action.paths, pullable);
+      if (partial.length > 0) {
+        const list = partial.slice(0, 3).map((g) => `${g.selected} of ${g.total} changed files in ${g.group}`).join(', ');
+        texts.push(`This pulls only part of an update (${list}${partial.length > 3 ? ', …' : ''}), which can leave the local site running mismatched code. Pull just these anyway?`);
+      }
+    }
+    return texts.length > 0 ? texts.join(' ') : null;
   };
 
   root.addEventListener('click', (e) => {
