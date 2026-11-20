@@ -6,7 +6,7 @@ import { Ddev } from '@localdock/core';
 import { openLinkSchema } from '../shared/actionSchema.js';
 import { REQUEST_DISPATCH, REQUEST_OPEN, REQUEST_STATE, type OpenLinkResult, type PanelActionInput, type PanelState } from '../shared/protocol.js';
 import { LocalDockController } from './controller.js';
-import type { OrcaWorkerApi, StatusItem } from './orca/host.js';
+import type { OrcaHost, OrcaWorkerApi, StatusItem } from './orca/host.js';
 import { PluginOrcaHost } from './orca/pluginHost.js';
 import { statusItem } from './status.js';
 import { PostTransport } from './transport.js';
@@ -18,7 +18,11 @@ let controller: LocalDockController | undefined;
 let transport: PostTransport | undefined;
 
 export default function activate(orca: OrcaWorkerApi): void {
-  const host = new PluginOrcaHost(orca);
+  startWorker(orca, new PluginOrcaHost(orca));
+}
+
+/** Wire the worker to Orca with a given OrcaHost (a fork can pass one that fills the gaps). */
+export function startWorker(orca: OrcaWorkerApi, host: OrcaHost): void {
   const posts = new PostTransport((event, payload) => orca.panels.post(event, payload));
   const status = statusUpdater(host);
   const ctl = new LocalDockController({
@@ -68,7 +72,7 @@ export function toJson<T>(value: T): T {
 }
 
 /** Keep the status bar item in step with the state, sending only real changes, one at a time. */
-function statusUpdater(host: PluginOrcaHost): (state: PanelState) => void {
+function statusUpdater(host: OrcaHost): (state: PanelState) => void {
   let shown: string | undefined;
   let pending: StatusItem | null | undefined;
   let sending = false;
