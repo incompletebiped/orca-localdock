@@ -52,6 +52,22 @@ export function sshTool(name: 'ssh' | 'ssh-keygen', platform: NodeJS.Platform = 
   return name;
 }
 
+/**
+ * The environment for `ssh` and `ssh-keygen`. Orca gives plugin workers a
+ * trimmed environment, and Windows' OpenSSH exits with 255 and no message
+ * when ProgramData is missing (it builds the system-wide config path from it).
+ */
+export function sshEnv(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
+  if (platform !== 'win32') return env;
+  const has = (k: string) => Object.keys(env).some((key) => key.toUpperCase() === k.toUpperCase() && env[key]);
+  const drive = env['SystemDrive'] ?? env['SYSTEMDRIVE'] ?? 'C:';
+  return {
+    ...env,
+    ...(has('ProgramData') ? {} : { ProgramData: path.win32.join(drive + '\\', 'ProgramData') }),
+    ...(has('USERPROFILE') ? {} : { USERPROFILE: home() }),
+  };
+}
+
 /** Host aliases defined in an ssh config (and the files it Includes). Wildcard and negated patterns are left out. */
 export async function listSshConfigAliases(configFile = path.join(home(), '.ssh', 'config'), depth = 0): Promise<string[]> {
   let text: string;
@@ -117,10 +133,10 @@ export function parseSshG(alias: string, output: string, exists: (p: string) => 
 /** Resolve an alias the way `ssh <alias>` would, with `ssh -G`. */
 export async function resolveSshHost(alias: string, runner: CommandRunner = processRunner): Promise<SshConfigHost> {
   if (!isSafeSshAlias(alias)) throw new LocalDockError(`Not a usable SSH host name: ${alias}`, 'UNSAFE_INPUT', false);
-  const r = await runner.run(sshTool('ssh'), ['-G', alias]);
+  const r = await runner.run(sshTool('ssh'), ['-G', alias], { env: sshEnv() });
   if (r.code !== 0) {
     throw new LocalDockError(
-      r.code === 127 ? 'OpenSSH (the ssh command) is not installed.' : `ssh -G ${alias} failed: ${r.stderr.trim() || `exit ${r.code}`}`,
+      r.code === 127 ? 'OpenSSH (the ssh command) is not installed.' : `ssh -G ${alias} failed: ${r.stderr.trim() || `exit ${r.code} with no message`}`,
       'NOT_FOUND',
       false,
     );
@@ -133,7 +149,7 @@ export async function knownHostKeys(host: SshConfigHost, runner: CommandRunner =
   const found = new Set<string>();
   for (const file of host.knownHostsFiles) {
     if (!existsSync(file)) continue;
-    const r = await runner.run(sshTool('ssh-keygen'), ['-l', '-F', host.knownHostsName, '-f', file]);
+    const r = await runner.run(sshTool('ssh-keygen'), ['-l', '-F', host.knownHostsName, '-f', file], { env: sshEnv() });
     for (const m of r.stdout.matchAll(/SHA256:[A-Za-z0-9+/]+/g)) found.add(m[0]);
   }
   return [...found];

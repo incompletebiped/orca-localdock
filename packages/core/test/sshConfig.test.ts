@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import ssh2 from 'ssh2';
 import { SshConnection, fingerprintHostKey } from '../src/ssh/SshConnection.js';
-import { isSafeSshAlias, knownHostKeys, listSshConfigAliases, parseSshG } from '../src/ssh/sshConfig.js';
+import { isSafeSshAlias, knownHostKeys, listSshConfigAliases, parseSshG, sshEnv } from '../src/ssh/sshConfig.js';
 import type { CommandRunner } from '../src/ddev/runner.js';
 
 const { Server, utils } = ssh2;
@@ -42,6 +42,14 @@ describe('reading the ssh config', () => {
     expect(h.proxy).toBeUndefined();
     expect(parseSshG('j', 'hostname h\nport 22\nproxyjump bastion\nhostkeyalias pinned-name').proxy).toBe('bastion');
     expect(parseSshG('j', 'hostname h\nport 22\nhostkeyalias pinned-name').knownHostsName).toBe('pinned-name');
+  });
+
+  it('gives Windows OpenSSH the variables a plugin worker lacks', () => {
+    const env = sshEnv({ PATH: 'x', SystemDrive: 'D:' }, 'win32');
+    expect(env['ProgramData']).toBe('D:\\ProgramData');
+    expect(env['USERPROFILE']).toBe(os.homedir());
+    expect(sshEnv({ PROGRAMDATA: 'E:\\Data', USERPROFILE: 'E:\\me' }, 'win32')).toEqual({ PROGRAMDATA: 'E:\\Data', USERPROFILE: 'E:\\me' });
+    expect(sshEnv({ PATH: 'x' }, 'linux')).toEqual({ PATH: 'x' });
   });
 
   it('collects known_hosts fingerprints with ssh-keygen', async () => {
