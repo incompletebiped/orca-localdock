@@ -100,6 +100,7 @@ describe('MySQL option files', () => {
 describe('readRemoteDbCredentials', () => {
   const sftpWith = (files: Record<string, string>) =>
     ({
+      realpath: async (p: string) => p,
       readFile: async (p: string) => {
         if (!(p in files)) throw new Error('No such file');
         return Buffer.from(files[p]!);

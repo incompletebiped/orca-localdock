@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as path from 'node:path';
 import { shq, shellCommand, isValidCpanelUser, isValidDomain, isValidDbHost, isValidDbIdentifier, slugify } from '../src/util/shell.js';
-import { assertSafeRemoteDir, normalizeRelPath, remoteJoin, localJoin } from '../src/util/remotePath.js';
+import { assertRealDocroot, assertSafeRemoteDir, normalizeRelPath, remoteJoin, localJoin } from '../src/util/remotePath.js';
 import { redact, registerSecret, createLogger, type LogEntry } from '../src/log.js';
 
 describe('shq', () => {
@@ -48,6 +48,14 @@ describe('validators', () => {
 });
 
 describe('remote path guard', () => {
+  it('refuses a docroot that is, or sits under, a symlink', async () => {
+    const links: Record<string, string> = { '/home/attacker/public_html/shop': '/home/victim/public_html' };
+    const sftp = { realpath: async (p: string) => links[p] ?? p };
+    await expect(assertRealDocroot(sftp, '/home/acct/public_html')).resolves.toBe('/home/acct/public_html');
+    await expect(assertRealDocroot(sftp, '/home/attacker/public_html/shop')).rejects.toMatchObject({ code: 'UNSAFE_INPUT' });
+    await expect(assertRealDocroot({ realpath: async () => Promise.reject(new Error('gone')) }, '/home/acct/x')).rejects.toMatchObject({ code: 'UNSAFE_INPUT' });
+  });
+
   it('accepts normal docroots and strips trailing slashes', () => {
     expect(assertSafeRemoteDir('/home/acct/public_html/')).toBe('/home/acct/public_html');
   });

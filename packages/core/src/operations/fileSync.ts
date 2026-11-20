@@ -10,7 +10,7 @@ import { readSiteState, writeSiteState, type SiteState } from '../sync/state.js'
 import { mapLimit } from '../util/concurrency.js';
 import { formatBytes } from '../util/format.js';
 import { PathMatcher } from '../util/glob.js';
-import { localJoin, normalizeRelPath, remoteDirname, remoteJoin, assertSafeRemoteDir } from '../util/remotePath.js';
+import { localJoin, normalizeRelPath, remoteDirname, remoteJoin, assertRealDocroot, assertSafeRemoteDir } from '../util/remotePath.js';
 import { assertValid, isValidCpanelUser, shq } from '../util/shell.js';
 import type { OperationContext, TransferFailure } from './context.js';
 
@@ -44,6 +44,8 @@ export async function computeSiteChanges(
 ): Promise<SiteChanges> {
   const state = await requireState(siteDir);
   const matcher = new PathMatcher(excludePatterns(exclude));
+  // Every push and pull goes through here: never work through a docroot that is (or sits under) a symlink.
+  await assertRealDocroot(ctx.sftp, state.docroot);
 
   ctx.progress({ phase: 'scan', message: 'Scanning local files…' });
   const local = await scanLocal(siteDir, matcher, state.files, { signal: ctx.signal });

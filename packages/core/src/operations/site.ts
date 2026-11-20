@@ -134,7 +134,10 @@ export async function pullSite(ctx: OperationContext, opts: PullSiteOptions): Pr
 
   // The root .htaccess isn't synced (it's environment-specific) but the site needs its rewrite rules locally.
   try {
-    await ctx.sftp.download(`${docroot}/.htaccess`, path.join(opts.projectDir, '.htaccess'));
+    // A regular file only: a symlinked .htaccess could copy any file root can read into the project.
+    if ((await ctx.sftp.stat(`${docroot}/.htaccess`)).isFile) {
+      await ctx.sftp.download(`${docroot}/.htaccess`, path.join(opts.projectDir, '.htaccess'));
+    }
   } catch {
     // Optional.
   }

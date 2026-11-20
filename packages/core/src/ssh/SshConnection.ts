@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as fsSync from 'node:fs';
 import * as path from 'node:path';
@@ -291,6 +291,11 @@ class SftpFs implements RemoteFs {
 
   async readFile(p: string, maxBytes = 5 * 1024 * 1024): Promise<Buffer> {
     const st = await this.stat(p);
+    // A regular file only: a symlink could lead a root session to another account's (or the system's)
+    // files, and a device like /dev/zero has no size to check.
+    if (!st.isFile) {
+      throw new LocalDockError(`${p} is not a regular file`, 'UNSAFE_INPUT');
+    }
     if (st.size > maxBytes) {
       throw new LocalDockError(`${p} is larger than ${maxBytes} bytes`, 'UNSAFE_INPUT');
     }
@@ -306,10 +311,21 @@ class SftpFs implements RemoteFs {
     await this.call<void>((cb) => this.s.fastGet(remotePath, localPath, (err) => cb(err)));
   }
 
+  /**
+   * Upload to a temporary name next to the file, then rename it into place. A symlink at the target is
+   * replaced instead of followed, so a root session never writes through a link a cPanel user planted.
+   */
   async upload(localPath: string, remotePath: string): Promise<void> {
+    const tmp = `${remotePath}.localdock-${randomBytes(6).toString('hex')}.tmp`;
     // Always 0644, the WordPress norm. Local modes are meaningless on Windows
     // (files report 0666) and must never make server files world-writable.
-    await this.call<void>((cb) => this.s.fastPut(localPath, remotePath, { mode: 0o644 }, (err) => cb(err)));
+    await this.call<void>((cb) => this.s.fastPut(localPath, tmp, { mode: 0o644 }, (err) => cb(err)));
+    try {
+      await this.call<void>((cb) => this.s.ext_openssh_rename(tmp, remotePath, (err) => cb(err)));
+    } catch (err) {
+      await this.call<void>((cb) => this.s.unlink(tmp, (e) => cb(e))).catch(() => {});
+      throw err;
+    }
   }
 
   async unlink(p: string): Promise<void> {

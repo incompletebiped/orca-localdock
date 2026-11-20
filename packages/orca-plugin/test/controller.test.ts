@@ -50,6 +50,7 @@ function fakeServerSession(): RemoteSession {
   };
   const wp = new Set(['/home/exampleco/public_html', '/home/exampleco/shop']);
   const sftp = {
+    realpath: async (p: string) => p,
     readFile: async (p: string) => {
       const root = p.replace(/\/wp-includes\/version\.php$/, '');
       if (p.endsWith('/wp-includes/version.php') && wp.has(root)) return Buffer.from(`<?php $wp_version = '6.8.1';`);

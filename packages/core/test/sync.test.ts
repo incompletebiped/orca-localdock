@@ -243,7 +243,7 @@ describe('change list without connecting', () => {
         return { code: 0, stderr: '', stdout: hashed.map((rel) => serverHash(rel) + '\n').join('') };
       },
     };
-    const ctx = { shell, logger: silentLogger, progress: () => {} } as unknown as OperationContext;
+    const ctx = { shell, sftp: { realpath: async (p: string) => p }, logger: silentLogger, progress: () => {} } as unknown as OperationContext;
 
     const first = await computeSiteChanges(ctx, dir);
     expect(hashed.sort()).toEqual([...paths].sort());
@@ -275,7 +275,7 @@ describe('change list without connecting', () => {
         return { code: 0, stderr: '', stdout: batch.map((rel) => (rel === 'index.php' ? 'e'.repeat(40) : baseline[rel]!.hash) + '\n').join('') };
       },
     };
-    const ctx = { shell, logger: silentLogger, progress: () => {} } as unknown as OperationContext;
+    const ctx = { shell, sftp: { realpath: async (p: string) => p }, logger: silentLogger, progress: () => {} } as unknown as OperationContext;
     await writeServerSnapshot(dir, { checkedAt: '2026-10-09T12:00:00.000Z', changed: {} });
 
     const r = await computeSiteChanges(ctx, dir, {}, { only: ['index.php'] });

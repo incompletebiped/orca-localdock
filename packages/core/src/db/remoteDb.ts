@@ -5,7 +5,7 @@ import { createGunzip } from 'node:zlib';
 import { LocalDockError } from '../errors.js';
 import { registerSecret } from '../log.js';
 import type { RemoteFs, RemoteShell } from '../ssh/types.js';
-import { assertSafeRemoteDir } from '../util/remotePath.js';
+import { assertRealDocroot, assertSafeRemoteDir } from '../util/remotePath.js';
 import { byteCounter, type ByteProgress } from '../util/format.js';
 import { assertValid, isValidDbHost, isValidDbIdentifier, shq } from '../util/shell.js';
 import { parseWpConfig } from '../discovery/wpConfig.js';
@@ -26,7 +26,7 @@ export interface DbCredentials {
  * returned in memory only; they're never persisted by LocalDock.
  */
 export async function readRemoteDbCredentials(sftp: RemoteFs, docroot: string): Promise<DbCredentials> {
-  const root = assertSafeRemoteDir(docroot);
+  const root = await assertRealDocroot(sftp, docroot);
   const parent = root.slice(0, root.lastIndexOf('/')) || '/';
   let source: string | undefined;
   for (const candidate of [`${root}/wp-config.php`, `${parent}/wp-config.php`]) {

@@ -59,3 +59,22 @@ export function localJoin(siteDir: string, relPath: string): string {
 export function remoteDirname(p: string): string {
   return path.posix.dirname(p);
 }
+
+/**
+ * A docroot that is its own real path: no part of it is a symlink. LocalDock
+ * often works as root, and a cPanel user who turned their docroot (or a folder
+ * above it) into a link to another account's site would otherwise have
+ * LocalDock read that account's wp-config.php and write into its files.
+ */
+export async function assertRealDocroot(sftp: { realpath(p: string): Promise<string> }, docroot: string): Promise<string> {
+  const root = assertSafeRemoteDir(docroot);
+  const real = await sftp.realpath(root).catch(() => null);
+  if (real !== root) {
+    throw new LocalDockError(
+      `${root} is a symlink, or sits under one${real ? ` (it leads to ${real})` : ''}. LocalDock only works in a site's real folder.`,
+      'UNSAFE_INPUT',
+      false,
+    );
+  }
+  return root;
+}
