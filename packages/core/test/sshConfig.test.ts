@@ -152,4 +152,40 @@ describe('connecting like ssh does', () => {
     await expect.poll(() => conn.closed, { timeout: 5000 }).toBe(true);
     await fs.rm(dir, { recursive: true, force: true });
   });
+
+  it('fails a running command and SFTP call when the connection drops, instead of waiting forever', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-lost-'));
+    const key = keyPair();
+    await fs.writeFile(path.join(dir, 'k'), key.private);
+    const hostKey = keyPair();
+    const hostFp = fingerprintHostKey(utils.parseKey(hostKey.public).getPublicSSH() as Buffer);
+    const sockets: Array<{ destroy(): void }> = [];
+    server = new Server({ hostKeys: [hostKey.private] }, (client) => {
+      client.on('authentication', (ctx) => ctx.accept());
+      client.on('error', () => {});
+      client.on('ready', () =>
+        client.on('session', (accept) => {
+          const session = accept();
+          // The server answers nothing: both calls are still waiting when the connection goes.
+          session.on('sftp', (acceptSftp) => void acceptSftp().on('REMOVE', () => {}));
+          session.on('exec', (acceptExec) => acceptExec().write('partial output'));
+        }),
+      );
+    });
+    (server as unknown as { _srv: { on(e: 'connection', f: (s: { destroy(): void }) => void): void } })._srv.on('connection', (s) => sockets.push(s));
+    await new Promise<void>((r) => server!.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as AddressInfo).port;
+    const conn = await SshConnection.connect({
+      host: '127.0.0.1', port, username: 'deploy', auth: { kind: 'keys-then-agent', keyPaths: [path.join(dir, 'k')] }, knownHostKeys: [hostFp],
+    });
+    const sftp = await conn.sftp();
+    const running = conn.exec('mysqldump');
+    const unlink = sftp.unlink('/tmp/x');
+    await new Promise((r) => setTimeout(r, 100));
+    sockets[0]!.destroy();
+    await expect(running).rejects.toMatchObject({ code: 'SSH_TIMEOUT' });
+    await expect(unlink).rejects.toMatchObject({ code: 'SSH_TIMEOUT' });
+    await expect(conn.exec('true')).rejects.toMatchObject({ code: 'SSH_TIMEOUT' });
+    await fs.rm(dir, { recursive: true, force: true });
+  });
 });

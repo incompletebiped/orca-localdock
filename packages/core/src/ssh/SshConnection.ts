@@ -47,6 +47,8 @@ export interface ConnectOptions {
 export class SshConnection implements RemoteShell {
   private sftpSession: SFTPWrapper | undefined;
   private ended = false;
+  /** Calls still waiting on the server; a dropped connection fails them all (ssh2 leaves SFTP calls waiting forever). */
+  private readonly waiting = new Set<(err: Error) => void>();
   private constructor(
     private readonly client: Client,
     readonly target: SshTarget,
@@ -56,7 +58,39 @@ export class SshConnection implements RemoteShell {
     // A connection that drops later (network change, server restart, idle timeout) must not
     // crash the process with an unhandled 'error', and callers need to know to reconnect.
     client.on('error', (err) => log.warn(`Connection to ${target.host}: ${err.message}`));
-    client.on('close', () => (this.ended = true));
+    client.on('close', () => {
+      this.ended = true;
+      this.sftpSession = undefined;
+      const lost = this.lostError();
+      for (const fail of this.waiting) fail(lost);
+      this.waiting.clear();
+    });
+  }
+
+  private lostError(): LocalDockError {
+    return new LocalDockError(`The connection to ${this.target.host} dropped. Try again.`, 'SSH_TIMEOUT', true);
+  }
+
+  /** A promise for one call on this connection that fails, rather than waits forever, if the connection drops. */
+  private call<T>(run: (resolve: (value: T) => void, reject: (err: Error) => void) => void): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      if (this.ended) {
+        reject(this.lostError());
+        return;
+      }
+      const fail = (err: Error) => reject(err);
+      this.waiting.add(fail);
+      run(
+        (value) => {
+          this.waiting.delete(fail);
+          resolve(value);
+        },
+        (err) => {
+          this.waiting.delete(fail);
+          reject(err);
+        },
+      );
+    });
   }
 
   /** True once the connection has dropped or been closed; open a new one. */
@@ -183,7 +217,7 @@ export class SshConnection implements RemoteShell {
   }
 
   exec(command: string, options: ExecOptions = {}): Promise<ExecResult> {
-    return new Promise((resolve, reject) => {
+    return this.call((resolve, reject) => {
       this.client.exec(command, (err, stream) => {
         if (err) {
           reject(normalizeError(err));
@@ -251,11 +285,11 @@ export class SshConnection implements RemoteShell {
 
   async sftp(): Promise<RemoteFs> {
     if (!this.sftpSession) {
-      this.sftpSession = await new Promise<SFTPWrapper>((resolve, reject) =>
+      this.sftpSession = await this.call<SFTPWrapper>((resolve, reject) =>
         this.client.sftp((err, s) => (err ? reject(normalizeError(err)) : resolve(s))),
       );
     }
-    return new SftpFs(this.sftpSession);
+    return new SftpFs(this.sftpSession, (run) => this.call(run));
   }
 
   close(): void {
@@ -279,10 +313,13 @@ function toStat(attrs: Stats): RemoteStat {
 }
 
 class SftpFs implements RemoteFs {
-  constructor(private readonly s: SFTPWrapper) {}
+  constructor(
+    private readonly s: SFTPWrapper,
+    private readonly onConnection: <T>(run: (resolve: (value: T) => void, reject: (err: Error) => void) => void) => Promise<T>,
+  ) {}
 
   private call<T>(fn: (cb: (err: Error | null | undefined, value?: T) => void) => void): Promise<T> {
-    return new Promise((resolve, reject) =>
+    return this.onConnection<T>((resolve, reject) =>
       fn((err, value) => (err ? reject(normalizeError(err)) : resolve(value as T))),
     );
   }
