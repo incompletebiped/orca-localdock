@@ -10,6 +10,14 @@ import type { CommandRunner } from '../src/ddev/runner.js';
 
 const { Server, utils } = ssh2;
 
+/** An ed25519 pair ssh2 can read back: about 1 in 350 of the ones it generates it can't parse itself. */
+function keyPair(encryption?: { passphrase: string; cipher: string; rounds: number }) {
+  for (;;) {
+    const k = encryption ? utils.generateKeyPairSync('ed25519', encryption) : utils.generateKeyPairSync('ed25519');
+    if (!(utils.parseKey(k.public) instanceof Error) && !(utils.parseKey(k.private, encryption?.passphrase) instanceof Error)) return k;
+  }
+}
+
 describe('reading the ssh config', () => {
   it('lists Host aliases, following Include, and skips patterns', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-sshcfg-'));
@@ -56,7 +64,7 @@ describe('reading the ssh config', () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-kh-'));
     const file = path.join(dir, 'known_hosts');
     await fs.writeFile(file, 'placeholder');
-    const pub = () => (utils.parseKey(utils.generateKeyPairSync('ed25519').public).getPublicSSH() as Buffer);
+    const pub = () => (utils.parseKey(keyPair().public).getPublicSSH() as Buffer);
     const [good, bad, ca] = [pub(), pub(), pub()];
     const line = (k: Buffer, marker = '') => `${marker ? marker + ' ' : ''}server.example.com ssh-ed25519 ${k.toString('base64')}`;
     const calls: string[][] = [];
@@ -82,7 +90,7 @@ describe('connecting like ssh does', () => {
   afterEach(() => server?.close());
 
   async function start(allowedKey: Buffer) {
-    const hostKey = utils.generateKeyPairSync('ed25519');
+    const hostKey = keyPair();
     const hostFp = fingerprintHostKey(utils.parseKey(hostKey.public).getPublicSSH() as Buffer);
     server = new Server({ hostKeys: [hostKey.private] }, (client) => {
       client.on('authentication', (ctx) => {
@@ -97,9 +105,9 @@ describe('connecting like ssh does', () => {
 
   it('trusts only known_hosts keys, and tries each identity file before giving up', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-keys-'));
-    const encrypted = utils.generateKeyPairSync('ed25519', { passphrase: 'secret', cipher: 'aes256-ctr', rounds: 2 });
-    const wrong = utils.generateKeyPairSync('ed25519');
-    const right = utils.generateKeyPairSync('ed25519');
+    const encrypted = keyPair({ passphrase: 'secret', cipher: 'aes256-ctr', rounds: 2 });
+    const wrong = keyPair();
+    const right = keyPair();
     const files = { encrypted: path.join(dir, 'enc'), wrong: path.join(dir, 'wrong'), right: path.join(dir, 'right') };
     await fs.writeFile(files.encrypted, encrypted.private);
     await fs.writeFile(files.wrong, wrong.private);
@@ -124,9 +132,9 @@ describe('connecting like ssh does', () => {
 
   it('marks a connection the server drops as closed, without an uncaught error', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-drop-'));
-    const key = utils.generateKeyPairSync('ed25519');
+    const key = keyPair();
     await fs.writeFile(path.join(dir, 'k'), key.private);
-    const hostKey = utils.generateKeyPairSync('ed25519');
+    const hostKey = keyPair();
     const hostFp = fingerprintHostKey(utils.parseKey(hostKey.public).getPublicSSH() as Buffer);
     const clients: Array<{ end(): void }> = [];
     server = new Server({ hostKeys: [hostKey.private] }, (client) => {
