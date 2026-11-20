@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { esc, newUiState, render } from '../src/panel/render.js';
+import { GROUP_ROWS, esc, newUiState, render } from '../src/panel/render.js';
 import { FIXTURES } from '../src/preview/fixtures.js';
 import type { PanelState } from '../src/shared/protocol.js';
 
@@ -45,16 +45,41 @@ describe('panel rendering', () => {
     expect(html).toContain('Local changes');
     expect(html).toContain('Server changes');
     expect(html).toContain('Changed on both sides');
-    expect(html).toMatch(/push-files[^>]*style\.css/);
+    expect(html).toMatch(/data-select-action="push"(?![^>]*disabled)/);
+    expect(html).toContain('theme example-child');
     expect(html).toContain('■ Stop');
     expect(html).toMatch(/class="link" data-action="[^"]*&quot;open&quot;[^"]*&quot;site&quot;/);
+  });
+
+  it('groups long change lists by core, plugin and theme, drawing rows only for open groups', () => {
+    const base = FIXTURES['Source control'] as Extract<PanelState, { view: 'tracking' }>;
+    const rows = [
+      ...Array.from({ length: 1200 }, (_, i) => ({ path: `wp-includes/file-${i}.php`, local: 'unchanged' as const, remote: 'modified' as const, direction: 'pull' as const })),
+      ...Array.from({ length: 300 }, (_, i) => ({ path: `wp-content/plugins/example-forms/f${i}.php`, local: 'unchanged' as const, remote: 'added' as const, direction: 'pull' as const })),
+    ];
+    const state: PanelState = { ...base, changes: { rows, serverCheckedAt: base.changes!.serverCheckedAt } };
+    const ui = newUiState();
+    let html = render(state, ui);
+    expect(html).toContain('WordPress core');
+    expect(html).toContain('plugin example-forms');
+    expect(html.indexOf('WordPress core')).toBeLessThan(html.indexOf('plugin example-forms'));
+    expect(html).not.toContain('data-select="wp-includes/'); // closed by default: no rows drawn
+    expect(html).toContain('data-group-action="pull|*"'); // "Pull all" names a group, not 1,500 paths
+    expect(html.length).toBeLessThan(20_000);
+
+    ui.toggledGroups.add('pull|WordPress core');
+    html = render(state, ui);
+    expect(html.match(/data-select="wp-includes\//g)).toHaveLength(GROUP_ROWS);
+    expect(html).toContain('Show all 1200');
+    ui.showAll.add('pull|WordPress core');
+    expect(render(state, ui).match(/data-select="wp-includes\//g)).toHaveLength(1200);
   });
 
   it('greys out the steps that need the server when it can’t be reached, and says why', () => {
     const html = render(FIXTURES['Source control (no SSH yet)']!, newUiState());
     expect(html).toContain('Server steps are off');
-    for (const type of ['scan-changes', 'push-files', 'pull-files', 'pull-db']) {
-      expect(html, type).toMatch(new RegExp(`${type}[^>]*disabled`));
+    for (const marker of ['scan-changes', 'pull-db', 'data-group-action="push|*"', 'data-group-action="pull|*"', 'data-group-action="pull|plugin contact-form-7"']) {
+      expect(html, marker).toMatch(new RegExp(`${marker.replace(/[|*]/g, '\\$&')}[^>]*disabled`));
     }
     expect(html).toMatch(/open-db[^>]*disabled/);
     expect(html).not.toMatch(/&quot;start&quot;[^>]*disabled|&quot;stop&quot;[^>]*disabled/);
@@ -70,7 +95,7 @@ describe('panel rendering', () => {
   it('greys out the change lists while a job runs and marks the files being synced', () => {
     const html = render(FIXTURES['Source control (pulling)']!, newUiState());
     expect(html).toContain('changes-busy');
-    expect(html).toMatch(/pull-files[^>]*disabled/);
+    expect(html).toMatch(/data-group-action="pull\|\*"[^>]*disabled/);
     expect(html).toMatch(/data-select="wp-content\/themes\/example-child\/style\.css" disabled/);
     expect(html.match(/change-syncing/g)).toHaveLength(2);
     expect(html).toContain('↓');

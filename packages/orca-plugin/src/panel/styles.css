@@ -90,6 +90,13 @@ main .notice { margin: 8px 0; }
 .section-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 8px; }
 .badge { min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--ld-accent); text-align: center; font-weight: 500; }
 
+.group-head { display: flex; align-items: center; gap: 6px; padding: 3px 12px; white-space: nowrap; }
+.group-head:hover { background: var(--ld-accent); }
+.group-toggle { flex: 1; min-width: 0; display: flex; gap: 4px; align-items: baseline; font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+.group-name { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.group .changes .change { padding-left: 34px; }
+.btn-small { font-size: 11px; padding: 1px 7px; }
+
 .changes { list-style: none; margin: 0; padding: 0; }
 .change { display: flex; align-items: center; gap: 6px; padding: 2px 12px; white-space: nowrap; }
 .change:hover { background: var(--ld-accent); }

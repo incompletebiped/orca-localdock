@@ -39,3 +39,33 @@ export function partialGroups(selected: readonly string[], all: readonly string[
     .map(([group, n]) => ({ group, selected: n, total: totals.get(group) ?? n }))
     .filter((g) => g.selected < g.total);
 }
+
+/** The group a change list shows a file under. */
+export const OTHER_FILES = 'Other files';
+/** In an action's `groups`, every group. */
+export const ALL_GROUPS = '*';
+
+export function groupLabel(path: string): string {
+  return updateGroup(path) ?? OTHER_FILES;
+}
+
+/** Order groups the way a person scans them: core, plugins, must-use plugins, themes, then everything else. */
+function groupRank(label: string): number {
+  if (label === 'WordPress core') return 0;
+  if (label.startsWith('plugin ')) return 1;
+  if (label.startsWith('must-use plugin ')) return 2;
+  if (label.startsWith('theme ')) return 3;
+  return 4;
+}
+
+/** Rows grouped by groupLabel, in display order. */
+export function groupRows<T extends { path: string }>(rows: readonly T[]): Array<[string, T[]]> {
+  const groups = new Map<string, T[]>();
+  for (const r of rows) {
+    const label = groupLabel(r.path);
+    let list = groups.get(label);
+    if (!list) groups.set(label, (list = []));
+    list.push(r);
+  }
+  return [...groups].sort(([a], [b]) => groupRank(a) - groupRank(b) || a.localeCompare(b));
+}

@@ -2,6 +2,16 @@
 import { z } from 'zod';
 
 const relPath = z.string().min(1).max(4096);
+/**
+ * Files for a push or pull: single paths, and/or whole change-list groups
+ * (`groups.ts`, `*` for all) that the worker expands from its own change list.
+ * Groups keep a click on "Pull all" small: Orca caps a panel request at 64 KiB.
+ */
+const fileSelection = {
+  paths: z.array(relPath).max(2000).default([]),
+  groups: z.array(z.string().min(1).max(300)).max(500).default([]),
+  allowConflicts: z.boolean().default(false),
+};
 const tableGroup = z.enum(['content', 'config', 'users', 'comments', 'commerce', 'plugins', 'other']);
 
 export const panelActionSchema = z.discriminatedUnion('type', [
@@ -18,8 +28,8 @@ export const panelActionSchema = z.discriminatedUnion('type', [
     includeUploads: z.boolean().default(false),
   }),
   z.object({ type: z.literal('scan-changes') }),
-  z.object({ type: z.literal('push-files'), paths: z.array(relPath).min(1).max(20000), allowConflicts: z.boolean().default(false) }),
-  z.object({ type: z.literal('pull-files'), paths: z.array(relPath).min(1).max(20000), allowConflicts: z.boolean().default(false) }),
+  z.object({ type: z.literal('push-files'), ...fileSelection }),
+  z.object({ type: z.literal('pull-files'), ...fileSelection }),
   z.object({ type: z.literal('start') }),
   z.object({ type: z.literal('stop') }),
   z.object({ type: z.literal('start-docker') }),

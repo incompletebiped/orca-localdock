@@ -469,6 +469,29 @@ describe('LocalDockController', () => {
     expect(s).not.toMatchObject({ ddev: { status: 'docker-not-running' } });
   });
 
+  it('expands groups named by a push or pull from its own change list, and refuses an empty one', async () => {
+    host.project = { path: dir, name: 'p' };
+    await writeSiteState(dir, {
+      version: 1, hostId: 'h1', account: 'exampleco', domain: 'example.com', docroot: '/home/exampleco/public_html',
+      productionUrl: 'https://example.com', tablePrefix: 'wp_', pulledAt: new Date().toISOString(), files: {},
+    });
+    await ctl.dispatch({ type: 'refresh' });
+    const rows = [
+      { path: 'wp-includes/version.php', local: 'unchanged', remote: 'modified', direction: 'pull' },
+      { path: 'wp-content/plugins/a/a.php', local: 'unchanged', remote: 'added', direction: 'pull' },
+      { path: 'wp-content/plugins/a/b.php', local: 'modified', remote: 'modified', direction: 'conflict' },
+      { path: 'wp-content/themes/t/style.css', local: 'modified', remote: 'unchanged', direction: 'push' },
+    ];
+    const view = (ctl as unknown as { view: { changes: unknown } }).view;
+    view.changes = { rows, serverCheckedAt: null };
+    const filesFor = (ctl as unknown as { filesFor: (d: string, p: string[], g: string[], c: boolean) => string[] }).filesFor.bind(ctl);
+    expect(filesFor('pull', [], ['plugin a'], false)).toEqual(['wp-content/plugins/a/a.php']);
+    expect(filesFor('pull', [], ['plugin a'], true)).toEqual(['wp-content/plugins/a/b.php']);
+    expect(filesFor('pull', ['x.php'], ['*'], false).sort()).toEqual(['wp-content/plugins/a/a.php', 'wp-includes/version.php', 'x.php']);
+    expect(filesFor('push', [], ['*'], false)).toEqual(['wp-content/themes/t/style.css']);
+    expect((await ctl.dispatch({ type: 'pull-files', groups: ['plugin gone'] })).notice?.text).toMatch(/Nothing to sync/);
+  });
+
   it('reconnects when the cached connection dropped since the last step', async () => {
     host.project = { path: dir, name: 'p' };
     host.hosts = [{ id: 'h1', label: 'x', host: 'server.example.com', port: 22, username: 'root', connected: true }];

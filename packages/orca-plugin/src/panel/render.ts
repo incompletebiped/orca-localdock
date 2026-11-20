@@ -1,3 +1,4 @@
+import { ALL_GROUPS, groupRows } from '../shared/groups.js';
 import type { ChangeRow, GapInfo, HostSummary, PanelState, SideChange, SiteSummary, TableGroupOption } from '../shared/protocol.js';
 
 /** Panel-only UI state that the worker doesn't need to know about. */
@@ -9,10 +10,14 @@ export interface UiState {
   dbGroups: Set<string>;
   /** A destructive action waiting for an inline confirmation (the sandbox blocks confirm() dialogs). */
   confirming: { action: string; text: string } | null;
+  /** Change-list groups (`<kind>|<group>`) the user opened or closed, against their default. */
+  toggledGroups: Set<string>;
+  /** Open groups showing every row, not just the first GROUP_ROWS. */
+  showAll: Set<string>;
 }
 
 export function newUiState(): UiState {
-  return { selected: new Set(), filter: '', includeUploads: false, dbOpen: false, dbGroups: new Set(), confirming: null };
+  return { selected: new Set(), filter: '', includeUploads: false, dbOpen: false, dbGroups: new Set(), confirming: null, toggledGroups: new Set(), showAll: new Set() };
 }
 
 const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -183,6 +188,53 @@ function changeList(rows: ChangeRow[], side: 'local' | 'remote', ui: UiState, bu
     .join('')}</ul>`;
 }
 
+/** Which change list a row is in. */
+export type ChangeKind = 'push' | 'pull' | 'conflict';
+
+/** A section with this many rows or fewer opens all its groups; a longer one starts with them closed. */
+const OPEN_GROUPS_UP_TO = 30;
+/** Rows drawn in an open group before "Show all", so a huge update doesn't redraw thousands of rows. */
+export const GROUP_ROWS = 200;
+
+/** A button identified by data attributes rather than an action JSON (the app resolves it against the state). */
+function attrButton(label: string, attrs: Record<string, string>, opts: { primary?: boolean; danger?: boolean; disabled?: boolean; title?: string; cls?: string } = {}): string {
+  const cls = ['btn', opts.primary ? 'btn-primary' : '', opts.danger ? 'btn-danger' : '', opts.cls ?? ''].filter(Boolean).join(' ');
+  const data = Object.entries(attrs).map(([k, v]) => ` ${k}="${esc(v)}"`).join('');
+  return `<button class="${cls}"${data}${opts.disabled ? ' disabled' : ''}${opts.title ? ` title="${esc(opts.title)}"` : ''}>${esc(label)}</button>`;
+}
+
+/**
+ * A change list grouped by WordPress core, plugin and theme. Rows are drawn
+ * only for open groups, at most GROUP_ROWS each, so thousands of pending
+ * changes stay quick to redraw.
+ */
+function groupedList(kind: ChangeKind, rows: ChangeRow[], side: 'local' | 'remote', ui: UiState, busy: boolean, serverOff: boolean): string {
+  const openByDefault = rows.length <= OPEN_GROUPS_UP_TO;
+  return groupRows(rows)
+    .map(([label, list]) => {
+      const key = `${kind}|${label}`;
+      const open = openByDefault !== ui.toggledGroups.has(key);
+      const picked = list.filter((r) => ui.selected.has(r.path)).length;
+      const verb = kind === 'push' ? 'Push' : 'Pull';
+      const quick =
+        kind === 'conflict'
+          ? ''
+          : attrButton(verb, { 'data-group-action': key }, { disabled: busy || serverOff, title: `${verb} all ${list.length} changed file${list.length === 1 ? '' : 's'} in ${label}`, cls: 'btn-small' });
+      const shown = !open ? [] : ui.showAll.has(key) ? list : list.slice(0, GROUP_ROWS);
+      return `<div class="group">
+        <div class="group-head">
+          <input type="checkbox" data-group-select="${esc(key)}"${picked === list.length ? ' checked' : ''}${busy ? ' disabled' : ''} aria-label="Select all of ${esc(label)}">
+          <button class="group-toggle" data-group-toggle="${esc(key)}" aria-expanded="${open}">${open ? '▾' : '▸'} <span class="group-name">${esc(label)}</span></button>
+          <span class="badge">${picked ? `${picked}/` : ''}${list.length}</span>
+          ${quick}
+        </div>
+        ${open ? changeList(shown, side, ui, busy) : ''}
+        ${open && shown.length < list.length ? `<p class="pad">${attrButton(`Show all ${list.length}`, { 'data-group-showall': key }, { cls: 'btn-small' })}</p>` : ''}
+      </div>`;
+    })
+    .join('');
+}
+
 /** A change list. Its buttons go above the rows, so they stay in reach when the list is long. */
 function section(title: string, count: number, body: string, actions: string): string {
   return `<details class="section" open><summary><span class="grow">${esc(title)}</span><span class="badge">${count}</span></summary>
@@ -220,20 +272,23 @@ function renderTracking(state: Extract<PanelState, { view: 'tracking' }>, ui: Ui
   const push = rows.filter((r) => r.direction === 'push');
   const pull = rows.filter((r) => r.direction === 'pull');
   const conflicts = rows.filter((r) => r.direction === 'conflict');
-  const selectedOf = (list: ChangeRow[]) => list.filter((r) => ui.selected.has(r.path)).map((r) => r.path);
-  const allOf = (list: ChangeRow[]) => list.map((r) => r.path);
+  const noneOf = (list: ChangeRow[]) => !list.some((r) => ui.selected.has(r.path));
+  // Buttons name what to sync (the selection, or a group); the app turns that into paths and group names,
+  // so a click never carries thousands of paths.
+  const sel = (label: string, which: string, disabled: boolean, opts: { primary?: boolean; danger?: boolean } = {}) =>
+    attrButton(label, { 'data-select-action': which }, { ...opts, ...server(disabled) });
+  const all = (label: string, kind: ChangeKind) => attrButton(label, { 'data-group-action': `${kind}|${ALL_GROUPS}` }, server(busy));
+  const serverOff = Boolean(blocked);
 
   const changeSections = changes
     ? [
-        section('Local changes', push.length, changeList(push, 'local', ui, busy),
-          button('Push selected', { type: 'push-files', paths: selectedOf(push) }, { primary: true, ...server(busy || selectedOf(push).length === 0) }) +
-          button('Push all', { type: 'push-files', paths: allOf(push) }, server(busy))),
-        section('Server changes', pull.length, changeList(pull, 'remote', ui, busy),
-          button('Pull selected', { type: 'pull-files', paths: selectedOf(pull) }, server(busy || selectedOf(pull).length === 0)) +
-          button('Pull all', { type: 'pull-files', paths: allOf(pull) }, server(busy))),
-        section('Changed on both sides', conflicts.length, changeList(conflicts, 'local', ui, busy),
-          button('Keep local (push)', { type: 'push-files', paths: selectedOf(conflicts), allowConflicts: true }, { danger: true, ...server(busy || selectedOf(conflicts).length === 0) }) +
-          button('Take server (pull)', { type: 'pull-files', paths: selectedOf(conflicts), allowConflicts: true }, { danger: true, ...server(busy || selectedOf(conflicts).length === 0) })),
+        section('Local changes', push.length, groupedList('push', push, 'local', ui, busy, serverOff),
+          sel('Push selected', 'push', busy || noneOf(push), { primary: true }) + all('Push all', 'push')),
+        section('Server changes', pull.length, groupedList('pull', pull, 'remote', ui, busy, serverOff),
+          sel('Pull selected', 'pull', busy || noneOf(pull)) + all('Pull all', 'pull')),
+        section('Changed on both sides', conflicts.length, groupedList('conflict', conflicts, 'local', ui, busy, serverOff),
+          sel('Keep local (push)', 'keep-local', busy || noneOf(conflicts), { danger: true }) +
+          sel('Take server (pull)', 'take-server', busy || noneOf(conflicts), { danger: true })),
       ].join('')
     : `<p class="muted small pad">Looking for local changes…</p>`;
 

@@ -33,6 +33,7 @@ import {
 } from '@localdock/core';
 import { GAPS, isOrcaApiPending } from '../shared/gaps.js';
 import { panelActionSchema } from '../shared/actionSchema.js';
+import { ALL_GROUPS, groupLabel } from '../shared/groups.js';
 import {
   linkUrl,
   type ChangeRow,
@@ -248,7 +249,7 @@ export class LocalDockController {
         return this.scanChanges();
       case 'push-files':
       case 'pull-files':
-        return this.syncFiles(action.type === 'push-files' ? 'push' : 'pull', action.paths, action.allowConflicts);
+        return this.syncFiles(action.type === 'push-files' ? 'push' : 'pull', action.paths, action.groups, action.allowConflicts);
       case 'start':
       case 'stop':
         return this.startStop(action.type);
@@ -563,7 +564,25 @@ export class LocalDockController {
     });
   }
 
-  private async syncFiles(direction: 'push' | 'pull', paths: string[], allowConflicts: boolean): Promise<void> {
+  /**
+   * The files a push or pull covers: the paths named, plus every row of the named groups in the change list the
+   * panel shows (conflict rows when overwriting one side, else rows going this way).
+   */
+  private filesFor(direction: 'push' | 'pull', paths: string[], groups: string[], allowConflicts: boolean): string[] {
+    const files = new Set(paths);
+    if (groups.length > 0 && this.view.view === 'tracking') {
+      const wanted = new Set(groups);
+      const kind = allowConflicts ? 'conflict' : direction;
+      for (const row of this.view.changes?.rows ?? []) {
+        if (row.direction === kind && (wanted.has(ALL_GROUPS) || wanted.has(groupLabel(row.path)))) files.add(row.path);
+      }
+    }
+    return [...files];
+  }
+
+  private async syncFiles(direction: 'push' | 'pull', named: string[], groups: string[], allowConflicts: boolean): Promise<void> {
+    const paths = this.filesFor(direction, named, groups, allowConflicts);
+    if (paths.length === 0) throw new LocalDockError('Nothing to sync: those files have no changes any more.', 'NOT_FOUND', false);
     await this.tracked(direction === 'push' ? 'Pushing files' : 'Pulling files', true, async (ctx, dir) => {
       const rows = this.syncingRows(dir, paths);
       let r;
