@@ -498,6 +498,31 @@ describe('LocalDockController', () => {
     expect((await ctl.dispatch({ type: 'pull-files', groups: ['plugin gone'] })).notice?.text).toMatch(/Nothing to sync/);
   });
 
+  it('won’t touch the server once state.json was changed outside LocalDock', async () => {
+    host.project = { path: dir, name: 'p' };
+    host.hosts = [{ id: 'h1', label: 'x', host: 'server.example.com', port: 22, username: 'root', connected: true }];
+    const site = {
+      version: 1 as const, hostId: 'h1', account: 'exampleco', domain: 'example.com', docroot: '/home/exampleco/public_html',
+      productionUrl: 'https://example.com', tablePrefix: 'wp_', pulledAt: new Date().toISOString(), files: {},
+    };
+    await writeSiteState(dir, site);
+    await ctl.dispatch({ type: 'refresh' });
+    let opened = 0;
+    host.openSession = async () => (opened++, fakeServerSession());
+    await ctl.dispatch({ type: 'scan-changes' }); // first use records the site
+    expect(opened).toBe(1);
+
+    await writeSiteState(dir, { ...site, docroot: '/root/.ssh' }); // the site's own code rewrote it
+    const s = await ctl.dispatch({ type: 'scan-changes' });
+    expect(s.notice?.text).toMatch(/changed outside LocalDock \(docroot\)/);
+    await writeSiteState(dir, { ...site, productionUrl: 'file:///etc/passwd' });
+    expect((await ctl.dispatch({ type: 'pull-db' })).notice?.text).toMatch(/isn’t a web address/);
+    expect(opened).toBe(1);
+    await writeSiteState(dir, site);
+    await ctl.dispatch({ type: 'scan-changes' });
+    expect(ctl.state().notice?.text ?? '').not.toMatch(/outside LocalDock/);
+  });
+
   it('reconnects when the cached connection dropped since the last step', async () => {
     host.project = { path: dir, name: 'p' };
     host.hosts = [{ id: 'h1', label: 'x', host: 'server.example.com', port: 22, username: 'root', connected: true }];

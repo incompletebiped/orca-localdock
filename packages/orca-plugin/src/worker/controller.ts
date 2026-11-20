@@ -61,6 +61,14 @@ export interface ControllerDeps {
 }
 
 const HOST_LABELS_KEY = 'hostLabels';
+const BINDINGS_KEY = 'siteBindings';
+
+/** The server-facing fields of a pulled site (see checkBinding). */
+type SiteBinding = Pick<SiteState, 'hostId' | 'account' | 'domain' | 'docroot' | 'productionUrl' | 'tablePrefix'>;
+
+function bindingOf(s: SiteState): SiteBinding {
+  return { hostId: s.hostId, account: s.account, domain: s.domain, docroot: s.docroot, productionUrl: s.productionUrl, tablePrefix: s.tablePrefix };
+}
 /** How often finished files are taken out of the change list during a push or pull. */
 const SYNC_ROWS_MS = 300;
 
@@ -432,6 +440,7 @@ export class LocalDockController {
       if (installed) await startSite(ctx, project.path, { importDump: true });
     }
     await this.rememberHostLabel(host);
+    await this.bind(project.path, result.state);
     this.discovered = null;
     this.notice = result.failed.length
       ? { kind: 'error', text: `Pulled ${result.fileCount - result.failed.length} of ${result.fileCount} files. ${result.failed.length} failed: ${result.failed.slice(0, 3).map((f) => f.path).join(', ')}…` }
@@ -549,6 +558,7 @@ export class LocalDockController {
     const dir = this.view.view === 'tracking' && this.trackingDir ? this.trackingDir : (await this.requireProject()).path;
     const state = await readSiteState(dir);
     if (!state) throw new LocalDockError(`${path.basename(dir)} has no pulled site.`, 'NOT_FOUND', false);
+    if (!opts.local) await this.checkBinding(dir, state);
     const ctx = await this.context(opts.local ? null : state.hostId, dir, title, cancellable);
     await fn(ctx, dir, state);
   }
@@ -781,6 +791,44 @@ export class LocalDockController {
       return undefined;
     } catch (err) {
       return isOrcaApiPending(err) ? `Orca plugins can't use SSH yet (${GAPS[err.gap].title}).` : undefined;
+    }
+  }
+
+  /**
+   * Which server, account, folder and live URL a project's site belongs to, kept in the plugin's own storage.
+   * .localdock/state.json lives in the project folder, which the site's own code can write while it runs in
+   * DDEV; a tampered file could otherwise point a push at another folder on the server (as root), or a
+   * database push's URL rewrite at another domain.
+   */
+  private bindingKey(dir: string): string {
+    const p = path.resolve(dir);
+    return process.platform === 'win32' ? p.toLowerCase() : p;
+  }
+
+  private async bind(dir: string, state: SiteState): Promise<void> {
+    const all = (await this.deps.host.storageGet<Record<string, SiteBinding>>(BINDINGS_KEY)) ?? {};
+    all[this.bindingKey(dir)] = bindingOf(state);
+    await this.deps.host.storageSet(BINDINGS_KEY, all);
+  }
+
+  /** Refuse to touch the server if state.json no longer matches what was recorded at pull time. */
+  private async checkBinding(dir: string, state: SiteState): Promise<void> {
+    if (!/^https?:\/\/[^\s]+$/i.test(state.productionUrl)) {
+      throw new LocalDockError('The live site address in .localdock/state.json isn’t a web address.', 'UNSAFE_INPUT', false);
+    }
+    const all = (await this.deps.host.storageGet<Record<string, SiteBinding>>(BINDINGS_KEY)) ?? {};
+    const saved = all[this.bindingKey(dir)];
+    // Sites pulled before LocalDock kept this record are recorded the first time they're used.
+    if (!saved) return this.bind(dir, state);
+    const now = bindingOf(state);
+    const changed = (Object.keys(now) as Array<keyof SiteBinding>).filter((k) => now[k] !== saved[k]);
+    if (changed.length > 0) {
+      throw new LocalDockError(
+        `.localdock/state.json was changed outside LocalDock (${changed.join(', ')}), so LocalDock won't touch the server for this project. ` +
+          'If you moved the site on purpose, pull it again into a new project.',
+        'UNSAFE_INPUT',
+        false,
+      );
     }
   }
 
