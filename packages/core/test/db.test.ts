@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { groupTables, tableGroup, defaultPushGroups } from '../src/db/tableGroups.js';
 import { parseSearchReplaceOutput, searchReplaceScript, urlReplacePairs } from '../src/db/searchReplace.js';
-import { buildOptionFile, parseDbHost, readRemoteDbCredentials, withOptionFile } from '../src/db/remoteDb.js';
+import { buildOptionFile, isLocalDbHost, parseDbHost, readRemoteDbCredentials, restoreRemoteBackup, withOptionFile } from '../src/db/remoteDb.js';
 import type { RemoteFs, RemoteShell } from '../src/ssh/types.js';
 
 describe('table groups', () => {
@@ -65,7 +65,14 @@ describe('MySQL option files', () => {
 
   it('quotes and escapes values', () => {
     const file = buildOptionFile({ name: 'db', user: 'u', password: 'a\\b"c\nd', host: 'localhost:3307', tablePrefix: 'wp_' });
-    expect(file).toBe('[client]\nuser="u"\npassword="a\\\\b"c\\nd"\nhost="localhost"\nport=3307\n');
+    expect(file).toBe('[client]\nuser="u"\npassword="a\\\\b"c\\nd"\nhost="localhost"\nport=3307\n[mysql]\nlocal-infile=0\n');
+  });
+
+  it('only accepts a database on the server itself', () => {
+    for (const ok of ['localhost', 'localhost:3307', '127.0.0.1', '[::1]:3306', 'localhost:/var/lib/mysql/mysql.sock', ':/tmp/mysql.sock']) {
+      expect(isLocalDbHost(ok), ok).toBe(true);
+    }
+    for (const bad of ['db.example.com', '203.0.113.9:3306', 'localhost.example.com']) expect(isLocalDbHost(bad), bad).toBe(false);
   });
 
   it('writes the option file privately and always removes it', async () => {
@@ -108,6 +115,36 @@ describe('readRemoteDbCredentials', () => {
       host: 'localhost',
       tablePrefix: 'wp_',
     });
+  });
+
+  it('refuses a database on another server', async () => {
+    const cfg = `<?php define('DB_NAME','acct_db'); define('DB_USER','acct_u'); define('DB_PASSWORD','pw'); define('DB_HOST','db.example.com');`;
+    await expect(readRemoteDbCredentials(sftpWith({ '/home/acct/public_html/wp-config.php': cfg }), '/home/acct/public_html')).rejects.toThrow(
+      /not this server/,
+    );
+  });
+
+  it('restores only this database’s own backups', async () => {
+    const creds = { name: 'acct_db', user: 'u', password: 'p', host: 'localhost', tablePrefix: 'wp_' };
+    const restored: string[] = [];
+    const shell = { exec: async (cmd: string) => (cmd.includes('gunzip') && restored.push(cmd), { code: 0, stdout: '', stderr: '' }) } as unknown as RemoteShell;
+    const sftp = {
+      realpath: async () => '/root',
+      stat: async (p: string) => ({ isFile: !p.includes('link'), isDirectory: false, size: 1, mtime: 0, uid: 0, gid: 0 }),
+      writeFile: async () => {},
+      unlink: async () => {},
+    } as unknown as RemoteFs;
+    await restoreRemoteBackup(shell, sftp, creds, '/root/.localdock-backups/acct_db-2026-11-20T05-00-00-000Z.sql.gz');
+    expect(restored).toHaveLength(1);
+    for (const bad of [
+      '/home/tenant/.localdock-backups/acct_db-1.sql.gz', // someone else's folder
+      '/root/.localdock-backups/other_db-1.sql.gz', // another database
+      '/root/.localdock-backups/acct_db-link.sql.gz', // a symlink
+      '/root/.localdock-backups/../acct_db-1.sql.gz',
+    ]) {
+      await expect(restoreRemoteBackup(shell, sftp, creds, bad), bad).rejects.toMatchObject({ code: 'UNSAFE_INPUT' });
+    }
+    expect(restored).toHaveLength(1);
   });
 
   it('rejects unsafe identifiers from a tampered wp-config.php', async () => {

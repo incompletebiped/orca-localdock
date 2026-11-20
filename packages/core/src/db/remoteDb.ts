@@ -49,6 +49,16 @@ export async function readRemoteDbCredentials(sftp: RemoteFs, docroot: string): 
     );
   }
   registerSecret(v.dbPassword);
+  const dbHost = v.dbHost ?? 'localhost';
+  if (!isLocalDbHost(dbHost)) {
+    // LocalDock runs mysql, mysqldump and php against this host, often as root. A database elsewhere could
+    // feed those clients hostile data (or ask for local files), so only the server's own database is used.
+    throw new LocalDockError(
+      `wp-config.php points the database at ${JSON.stringify(dbHost)}, not this server. LocalDock only works with a database on the server itself.`,
+      'UNSAFE_INPUT',
+      false,
+    );
+  }
   return {
     name: assertValid('database name', v.dbName, isValidDbIdentifier),
     user: assertValid('database user', v.dbUser, isValidDbIdentifier),
@@ -56,6 +66,12 @@ export async function readRemoteDbCredentials(sftp: RemoteFs, docroot: string): 
     host: assertValid('database host', v.dbHost ?? 'localhost', isValidDbHost),
     tablePrefix: assertValid('table prefix', v.tablePrefix ?? 'wp_', (p) => /^[A-Za-z0-9_]{1,32}$/.test(p)),
   };
+}
+
+/** A DB_HOST on this server: localhost or loopback, with an optional port or socket. */
+export function isLocalDbHost(dbHost: string): boolean {
+  const { host } = parseDbHost(dbHost);
+  return ['', 'localhost', '127.0.0.1', '::1', '[::1]'].includes(host.toLowerCase());
 }
 
 /** Split DB_HOST into host/port/socket. */
@@ -80,6 +96,9 @@ export function buildOptionFile(creds: DbCredentials): string {
   lines.push(`host=${optionFileValue(host.replace(/^\[|\]$/g, ''))}`);
   if (port) lines.push(`port=${port}`);
   if (socket) lines.push(`socket=${optionFileValue(socket)}`);
+  // The mysql client may not read local files on a server's request (LOAD DATA LOCAL). Only mysql reads
+  // [mysql]; mysqldump would refuse the option in [client].
+  lines.push('[mysql]', 'local-infile=0');
   return lines.join('\n') + '\n';
 }
 
@@ -101,6 +120,8 @@ export async function withOptionFile<T>(
   if (mk.code !== 0) {
     throw new LocalDockError(`Couldn't create ${dir}: ${mk.stderr.trim()}`, 'REMOTE_COMMAND_FAILED');
   }
+  // A connection that dropped mid-job leaves its option file behind: clear out any older than an hour.
+  await shell.exec(`find ${shq(dir)} -maxdepth 1 -type f -name '*.cnf' -mmin +60 -delete`).catch(() => {});
   const file = `${dir}/${randomBytes(12).toString('hex')}.cnf`;
   await sftp.writeFile(file, buildOptionFile(creds), 0o600);
   try {
@@ -234,9 +255,16 @@ export async function restoreRemoteBackup(
   creds: DbCredentials,
   backupPath: string,
 ): Promise<void> {
-  if (!/\/\.localdock-backups\/[A-Za-z0-9_.-]+\.sql\.gz$/.test(backupPath)) {
-    throw new LocalDockError('Not a LocalDock backup path', 'UNSAFE_INPUT', false);
-  }
+  // Only a backup LocalDock took of this database: in the SSH user's own backup folder, named after the
+  // database, and a regular file (not a link to somewhere else).
+  const dir = `${assertSafeRemoteDir(await sftp.realpath('.'))}/.localdock-backups`;
+  const name = backupPath.slice(dir.length + 1);
+  const ok =
+    backupPath.startsWith(`${dir}/`) &&
+    name.startsWith(`${creds.name}-`) &&
+    /^[A-Za-z0-9_-]+\.sql\.gz$/.test(name) &&
+    (await sftp.stat(backupPath).then((st) => st.isFile, () => false));
+  if (!ok) throw new LocalDockError('Not a LocalDock backup of this database', 'UNSAFE_INPUT', false);
   await withOptionFile(shell, sftp, creds, async (cnf) => {
     const mysql = ['mysql', `--defaults-extra-file=${cnf}`, '--default-character-set=utf8mb4', creds.name].map(shq).join(' ');
     const cmd = `set -o pipefail && gunzip -c ${shq(backupPath)} | ${mysql}`;
