@@ -138,7 +138,8 @@ async function writeEntry(entry: ReadEntry, siteDir: string, rel: string, onByte
       hash.update(chunk);
       onBytes(chunk.length);
       // After a write error keep reading, so the archive stream moves on to the next file.
-      if (!writeError && !out.write(chunk)) await Promise.race([once(out, 'drain'), once(out, 'error')]).catch(() => {});
+      // once() rejects on 'error' itself; racing a second once(out, 'error') left one listener behind per wait.
+      if (!writeError && !out.write(chunk)) await once(out, 'drain').catch(() => {});
     }
     complete = !entry.destroyed;
   } finally {
