@@ -106,6 +106,67 @@ describe('downloadArchive', () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
+  it('splits a larger download into archives of about equal size, sent side by side', async () => {
+    const files: Record<string, Buffer> = {};
+    for (let i = 0; i < 12; i++) files[`wp-content/f${i}.bin`] = Buffer.alloc(150_000 + i * 10_000, i);
+    const stdins: string[][] = [];
+    let running = 0;
+    let most = 0;
+    const shell: RemoteShell = {
+      exec: async (_command, options = {}) => {
+        const names = String(options.stdin).split('\0').filter(Boolean).map((n) => n.slice(2));
+        stdins.push(names);
+        running++;
+        most = Math.max(most, running);
+        const data = await archive(Object.fromEntries(names.map((n) => [n, files[n]!])));
+        for (let i = 0; i < data.length; i += 4000) {
+          options.stdout!.write(data.subarray(i, i + 4000));
+          await new Promise((r) => setImmediate(r));
+        }
+        running--;
+        return { code: 0, stdout: '', stderr: '' };
+      },
+    };
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-dst-'));
+    const wanted = new Map(Object.entries(files).map(([rel, b]) => [rel, meta(b.length)]));
+    const total = [...wanted.values()].reduce((s, f) => s + f.size, 0);
+    const progress: Array<[number, number]> = [];
+    const res = await downloadArchive(shell, '/home/acct/public_html', dir, wanted, { streams: 3, onProgress: (b, t) => progress.push([b, t]) });
+
+    expect(stdins).toHaveLength(3);
+    expect(most).toBe(3);
+    // Every file asked for exactly once, and the groups within one file's size of each other.
+    expect(stdins.flat().sort()).toEqual([...wanted.keys()].sort());
+    const sizes = stdins.map((names) => names.reduce((s, n) => s + files[n]!.length, 0));
+    expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(260_000);
+    expect(Object.keys(res.files).sort()).toEqual([...wanted.keys()].sort());
+    expect(res.files['wp-content/f3.bin']!.hash).toBe(sha1(files['wp-content/f3.bin']!));
+    expect(res.failed).toEqual([]);
+    expect(progress.at(-1)).toEqual([total, total]);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('stops the other archives when one fails, and reports that failure', async () => {
+    const files: Record<string, Buffer> = {};
+    for (let i = 0; i < 4; i++) files[`f${i}.bin`] = Buffer.alloc(400_000, i);
+    let calls = 0;
+    const cancelled: boolean[] = [];
+    const shell: RemoteShell = {
+      exec: async (_command, options = {}) => {
+        if (++calls === 1) return { code: 2, stdout: '', stderr: 'tar: broken' };
+        // The others wait until they're stopped.
+        await new Promise<void>((resolve) => options.signal!.addEventListener('abort', () => resolve(), { once: true }));
+        cancelled.push(true);
+        throw new LocalDockError('Operation cancelled', 'CANCELLED');
+      },
+    };
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-dst-'));
+    const wanted = new Map(Object.entries(files).map(([rel, b]) => [rel, meta(b.length)]));
+    await expect(downloadArchive(shell, '/home/acct/public_html', dir, wanted, { streams: 4 })).rejects.toThrow(/exit 2.*tar: broken/);
+    expect(cancelled).toHaveLength(3);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
   it('does nothing for an empty list', async () => {
     const shell: RemoteShell = { exec: async () => { throw new Error('should not run'); } };
     expect(await downloadArchive(shell, '/home/acct/public_html', os.tmpdir(), new Map())).toEqual({ files: {}, failed: [] });

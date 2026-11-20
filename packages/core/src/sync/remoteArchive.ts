@@ -21,14 +21,21 @@ export interface ArchiveDownload {
 
 const REGULAR = new Set(['File', 'OldFile', 'ContiguousFile']);
 const PROGRESS_EVERY_MS = 250;
+/** Below this, one stream: splitting only pays off once there's enough to send. */
+const SPLIT_FROM_BYTES = 1024 * 1024;
+const DEFAULT_STREAMS = 4;
 
 /**
- * Download files as one gzipped tar stream over SSH and unpack them as they
+ * Download files as gzipped tar streams over SSH and unpack them as they
  * arrive, instead of one SFTP request (or three) per file. The server archives
  * exactly the listed paths, fed on stdin NUL-separated. Locally, only listed
  * regular files are written, each through localJoin (so nothing lands outside
  * the site folder), and each is hashed while it's written: the content is the
  * server's, so that hash is the baseline for both sides.
+ *
+ * Larger downloads are split into `streams` archives of about equal size,
+ * sent side by side on the one connection: over a distant link each SSH
+ * channel is held back by the round trip, so several at once go faster.
  */
 export async function downloadArchive(
   shell: RemoteShell,
@@ -40,13 +47,14 @@ export async function downloadArchive(
     onProgress?: (bytes: number, totalBytes: number) => void;
     /** Called as each file lands in the site folder. */
     onFile?: (rel: string) => void;
+    /** Archives to send side by side (default 4). */
+    streams?: number;
   } = {},
 ): Promise<ArchiveDownload> {
   const root = assertSafeRemoteDir(docroot);
   const result: ArchiveDownload = { files: {}, failed: [] };
   if (wanted.size === 0) return result;
 
-  const pending = new Map(wanted);
   const totalBytes = [...wanted.values()].reduce((sum, f) => sum + f.size, 0);
   let bytes = 0;
   let reportedAt = 0;
@@ -56,7 +64,58 @@ export async function downloadArchive(
     reportedAt = now;
     options.onProgress?.(bytes, totalBytes);
   };
+  const onBytes = (n: number) => {
+    bytes += n;
+    report();
+  };
 
+  const streams = totalBytes < SPLIT_FROM_BYTES ? 1 : Math.max(1, Math.min(options.streams ?? DEFAULT_STREAMS, wanted.size));
+  const groups = splitBySize(wanted, streams);
+  // One archive failing stops the others, and its error (not their cancellation) is the one reported.
+  const stop = new AbortController();
+  const onAbort = () => stop.abort();
+  options.signal?.addEventListener('abort', onAbort, { once: true });
+  if (options.signal?.aborted) stop.abort();
+  let firstError: unknown;
+  try {
+    await Promise.all(
+      groups.map((group) =>
+        downloadOne(shell, root, siteDir, group, result, { signal: stop.signal, onBytes, onFile: options.onFile }).catch((err: unknown) => {
+          firstError ??= err;
+          stop.abort();
+        }),
+      ),
+    );
+  } finally {
+    options.signal?.removeEventListener('abort', onAbort);
+  }
+  if (firstError !== undefined) throw firstError;
+  report(true);
+  return result;
+}
+
+/** Split files into `n` groups of about equal total size (largest first, each to the lightest group). */
+function splitBySize(files: ReadonlyMap<string, RemoteFile>, n: number): Array<Map<string, RemoteFile>> {
+  if (n <= 1) return [new Map(files)];
+  const groups = Array.from({ length: n }, () => ({ bytes: 0, files: new Map<string, RemoteFile>() }));
+  for (const [rel, meta] of [...files].sort((a, b) => b[1].size - a[1].size)) {
+    const lightest = groups.reduce((min, g) => (g.bytes < min.bytes ? g : min));
+    lightest.files.set(rel, meta);
+    lightest.bytes += meta.size;
+  }
+  return groups.filter((g) => g.files.size > 0).map((g) => g.files);
+}
+
+/** One tar stream for `wanted`, adding what it writes (and what failed) to `result`. */
+async function downloadOne(
+  shell: RemoteShell,
+  root: string,
+  siteDir: string,
+  wanted: ReadonlyMap<string, RemoteFile>,
+  result: ArchiveDownload,
+  options: { signal: AbortSignal; onBytes: (n: number) => void; onFile?: (rel: string) => void },
+): Promise<void> {
+  const pending = new Map(wanted);
   const writes: Promise<void>[] = [];
   let current: ReadEntry | undefined;
   const parser = new Parser({ strict: true });
@@ -70,10 +129,7 @@ export async function downloadArchive(
     }
     pending.delete(rel);
     writes.push(
-      writeEntry(entry, siteDir, rel, (n) => {
-        bytes += n;
-        report();
-      }).then(
+      writeEntry(entry, siteDir, rel, options.onBytes).then(
         async ({ hash, file }) => {
           const st = await fs.stat(file);
           result.files[rel] = { hash, size: st.size, remoteMtime: meta.mtime, localMtimeMs: st.mtimeMs };
@@ -112,9 +168,7 @@ export async function downloadArchive(
     // In-flight writes never reject; let them settle so nothing writes after we return.
     await Promise.all(writes);
   }
-  report(true);
   for (const rel of pending.keys()) result.failed.push({ path: rel, error: 'Not in the server archive (deleted or unreadable since listing)' });
-  return result;
 }
 
 /** Stream one archive entry to its file via a temp name, hashing on the way. Always consumes the entry. */
