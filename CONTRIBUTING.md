@@ -9,7 +9,7 @@ npm install
 npm test            # vitest across all packages
 npm run typecheck
 npm run lint
-npm run build       # plugin → packages/orca-plugin/dist (load it in Orca: Settings → Plugin Development)
+npm run build       # plugin → packages/orca-plugin/dist (load it in Orca: orca plugin dev load packages/orca-plugin/dist)
 npm run preview     # panel preview with sample data → packages/orca-plugin/preview/index.html
 ```
 

@@ -3,13 +3,13 @@
 ```
 ┌──────────── Orca ────────────┐
 │ Right sidebar                │        ┌──────── plugin worker (Node) ────────┐
-│ ┌──────────────────────────┐ │  gap 1 │ main.ts      commands, events        │
-│ │ LocalDock panel (iframe) │◄├────────┤ controller.ts  state machine         │
-│ │ render.ts · app.ts       │ │        │ orca/pluginHost.ts ── gaps 2–5 ──► Orca│
-│ │ bridge.ts                │ │        │            │                         │
+│ ┌──────────────────────────┐ │request │ main.ts   handlers, commands, events │
+│ │ LocalDock panel (iframe) │◄├───────►┤ controller.ts  state machine         │
+│ │ render.ts · app.ts       │ │  post  │ orca/pluginHost.ts ── host API ──► Orca│
+│ │ bridge.ts                │ │        │            │   (SSH: gaps 1–2)       │
 │ └──────────────────────────┘ │        │            ▼                         │
-└──────────────────────────────┘        │  @localdock/core (engine)            │
-                                        │   discovery · sync · db · ddev       │
+│ Status bar: site ↑3 ↓1       │        │  @localdock/core (engine)            │
+└──────────────────────────────┘        │   discovery · sync · db · ddev       │
                                         └──────┬────────────────┬──────────────┘
                                                │ RemoteShell/Fs │ ddev CLI
                                                ▼                ▼
@@ -41,24 +41,26 @@ This package has no Orca or VS Code dependencies.
 
 ### `packages/orca-plugin`: the plugin
 
-- `orca-plugin.json`: the manifest. It declares one panel, the commands and the capabilities.
-- `src/worker/main.ts`: `activate(orca)`. It registers `localdock.state` and `localdock.dispatch` (the panel's two entry points) plus command-palette shortcuts.
+- `orca-plugin.json`: the manifest (format 2, `trusted-worker`). It declares one panel, the palette commands, the `workspace.changed` event, a status bar item and the capabilities.
+- `src/worker/main.ts`: `activate(orca)`. It answers the panel's two requests (`state` and `dispatch`) with `orca.panels.handle`, registers the command-palette shortcuts, refreshes on `workspace.changed`, and keeps the status bar item current. A dispatch answers within 400 ms with the state so far, because a pull can outlast a panel request; the rest arrives as pushes.
+- `src/worker/transport.ts`: pushes each state to the panel with `orca.panels.post`, at most every 100 ms (Orca allows 200 posts per 10 s). A state over 256 KiB goes out as a `state.stale` notice, and the panel fetches it.
+- `src/worker/status.ts`: the status bar text for a state.
 - `src/worker/controller.ts`: the state machine:
   `no-project | project-not-empty | set-up → no-hosts | choose-host → scanning → site-list → pulling → tracking`. An empty project stays at `set-up` until the user opts in.
   In `tracking`, the panel looks like Source Control and has DDEV controls. Panel actions are validated with zod (`shared/actionSchema.ts`). A pull only accepts sites the worker discovered itself.
-- `src/worker/orca/`: `OrcaHost` is the interface to everything Orca provides. `PluginOrcaHost` implements it with Orca's Host API v0 and throws `OrcaApiPendingError` for the gaps.
-- `src/panel/`: the UI. `render.ts` is a pure function from state to HTML, and every string from the server is escaped. Confirmations happen inline, because the sandbox blocks `confirm()`. `bridge.ts` is the panel's side of the messaging (gap 1).
+- `src/worker/orca/`: `OrcaHost` is the interface to everything Orca provides. `PluginOrcaHost` implements it with Orca's host API 1 and throws `OrcaApiPendingError` for the two SSH gaps.
+- `src/panel/`: the UI. `render.ts` is a pure function from state to HTML, and every string from the server is escaped. Confirmations happen inline, because the sandbox blocks `confirm()`. `bridge.ts` is the panel's side of the messaging (`window.orca.plugin`). Link buttons and the local URL ask the worker (`open` request) to open a tab in Orca's browser through Orca's CLI; if that fails, the panel opens the default browser with `orca.shell.openExternal`, which Orca only allows from a click in the frame. Colors come from Orca's `--orca-*` frame variables.
 - `src/preview/`: a browser preview with sample states. It's not shipped.
-- `scripts/build.mjs`: bundles the worker into `dist/worker.mjs`, and inlines the panel's script and CSS into `dist/panel/index.html`, because the panel's CSP allows inline only.
+- `scripts/build.mjs`: bundles the worker into `dist/worker.mjs`, and inlines the panel's script and CSS into `dist/panel/index.html`, so it also works in browser clients of `orca serve`, whose frames allow inline only.
 
 ## Swap points
 
-All Orca-specific gaps sit behind two seams. A fork that experiments with workarounds, or the real implementation once Orca ships the APIs, only touches these:
+Everything Orca-specific sits behind two seams. A fork that experiments with workarounds for the SSH gaps, or the real implementation once Orca ships those APIs, only touches these:
 
 | Seam | File | What changes |
 |---|---|---|
 | Panel ↔ worker | `src/panel/bridge.ts` (`PanelBridge`) and `src/worker/transport.ts` (`PanelTransport`) | How the panel gets state and sends actions |
-| Everything else from Orca | `src/worker/orca/host.ts` (`OrcaHost`) | Project path, SSH hosts, SSH sessions, opening URLs |
+| Everything else from Orca | `src/worker/orca/host.ts` (`OrcaHost`) | Project path, SSH hosts, SSH sessions, status bar |
 
 The engine, the controller and the UI stay the same.
 

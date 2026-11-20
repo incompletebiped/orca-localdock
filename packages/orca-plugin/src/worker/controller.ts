@@ -34,9 +34,11 @@ import {
 import { GAPS, isOrcaApiPending } from '../shared/gaps.js';
 import { panelActionSchema } from '../shared/actionSchema.js';
 import {
+  linkUrl,
   type DdevInfo,
   type HostSummary,
   type Job,
+  type LinkTarget,
   type Notice,
   type PanelAction,
   type PanelState,
@@ -57,6 +59,16 @@ export interface ControllerDeps {
 }
 
 const HOST_LABELS_KEY = 'hostLabels';
+
+/** How notices name the steps that need the server. */
+const STEP_NAMES: Partial<Record<string, string>> = {
+  'scan-changes': 'Checking for changes',
+  'push-files': 'Pushing files',
+  'pull-files': 'Pulling files',
+  'pull-db': 'Pulling the live database',
+  'push-db': 'Pushing the database',
+  'rollback-db': 'Rolling back the database',
+};
 
 /** The "session" of a local-only job: any use of the server is a bug, so it fails loudly. */
 const NOT_CONNECTED: RemoteSession = new Proxy({} as RemoteSession, {
@@ -82,7 +94,8 @@ export class LocalDockController {
   private job: Job | null = null;
   /** The panel notice and the project it's about; it only shows in that project. */
   private noticeEntry: { notice: Notice; dir: string | null } | null = null;
-  private revision = 0;
+  /** Starts at the clock, so a restarted worker's states still count as newer than the last one the panel saw. */
+  private revision = Date.now();
   private abort: AbortController | null = null;
   private readonly sessions = new Map<string, { session: RemoteSession; asRoot: boolean; username: string }>();
   private discovered: { hostId: string; sites: DiscoveredSite[] } | null = null;
@@ -181,6 +194,12 @@ export class LocalDockController {
   }
 
   private fail(err: unknown, actionType: string): void {
+    if (isOrcaApiPending(err) && this.view.view === 'tracking') {
+      // Local work (DDEV, the change list) still works here, so keep the view and say what's missing.
+      const gap = GAPS[err.gap];
+      this.setNotice({ kind: 'info', text: `${STEP_NAMES[actionType] ?? 'This step'} needs the server, and Orca plugins can't use SSH yet (${gap.title}). Local start, stop and changes still work.` });
+      return;
+    }
     if (isOrcaApiPending(err)) {
       this.view = { view: 'awaiting-orca', gaps: [GAPS[err.gap]], blockedAction: actionType };
       this.notice = null;
@@ -235,8 +254,6 @@ export class LocalDockController {
         return this.refreshTracking();
       case 'free-space':
         return this.freeSpace();
-      case 'open':
-        return this.open(action.target);
       case 'load-db-groups':
         return this.loadDbGroups();
       case 'push-db':
@@ -264,6 +281,10 @@ export class LocalDockController {
     if (!this.project) {
       this.watch(null);
       return this.setView({ view: 'no-project' });
+    }
+    if (this.project.remote) {
+      this.watch(null);
+      return this.setView({ view: 'remote-project', projectName: this.project.name });
     }
     if (this.job && this.jobHome && this.here(this.jobHome.dir)) return this.setView(this.jobHome.view);
     const state = await readSiteState(this.project.path);
@@ -306,6 +327,7 @@ export class LocalDockController {
   private async requireProject(): Promise<ProjectInfo> {
     this.project ??= await this.deps.host.activeProject();
     if (!this.project) throw new LocalDockError('Open a project in Orca first.', 'NOT_FOUND', false);
+    if (this.project.remote) throw new LocalDockError('LocalDock runs sites on this computer, so it needs a local project.', 'NOT_FOUND', false);
     return this.project;
   }
 
@@ -421,6 +443,7 @@ export class LocalDockController {
       dbGroups: prev?.dbGroups ?? null,
       lastBackup: prev?.lastBackup,
       dockerIdle: this.dockerIdle,
+      serverBlocked: await this.serverBlocked(),
     });
     this.watch(project.path);
     void this.updateLocalChanges(project.path);
@@ -607,15 +630,19 @@ export class LocalDockController {
     });
   }
 
-  private async open(target: 'site' | 'admin' | 'mailpit' | 'live'): Promise<void> {
-    if (this.view.view !== 'tracking') return;
-    const { ddev, site } = this.view;
-    const url =
-      target === 'live' ? site.productionUrl
-      : target === 'mailpit' ? ddev.mailpitUrl
-      : ddev.url && (target === 'admin' ? `${ddev.url.replace(/\/$/, '')}/wp-admin/` : ddev.url);
-    if (!url) throw new LocalDockError('Start the local site first.', 'NOT_FOUND', false);
-    await this.deps.host.openUrl(url);
+  /**
+   * Open a link button's URL in Orca's browser, in the tracked project. The URL
+   * comes from the worker's own state; the panel only names the button.
+   * `opened: false` with a URL tells the panel to open it in the default browser instead.
+   */
+  async openLink(target: LinkTarget): Promise<{ opened: boolean; url: string | null }> {
+    const url = linkUrl(this.view, target);
+    if (!url || !this.trackingDir || !this.here(this.trackingDir)) return { opened: false, url };
+    const opened = await this.deps.host.openInOrcaBrowser(url, this.trackingDir).catch((err: Error) => {
+      this.logger.warn(`Opening ${url} in Orca's browser: ${err.message}`);
+      return false;
+    });
+    return { opened, url };
   }
 
   private async loadDbGroups(): Promise<void> {
@@ -652,6 +679,16 @@ export class LocalDockController {
     if (check.dockerError) return { status: 'docker-not-running' };
     const d = await this.deps.ddev.describe(dir);
     return { status: d.status, url: d.url, mailpitUrl: d.mailpitUrl };
+  }
+
+  /** Whether this build can reach servers at all, so the panel can grey out what needs one instead of failing on click. */
+  private async serverBlocked(): Promise<string | undefined> {
+    try {
+      await this.deps.host.listSshHosts();
+      return undefined;
+    } catch (err) {
+      return isOrcaApiPending(err) ? `Orca plugins can't use SSH yet (${GAPS[err.gap].title}).` : undefined;
+    }
   }
 
   private async rememberHostLabel(host: SshHostInfo): Promise<void> {

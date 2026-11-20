@@ -10,16 +10,15 @@
 - [x] Source-Control-style tracking: local changes watched live, server changes kept from the last check
 - [x] Missing media served from the live site, so uploads don't need to be pulled
 - [x] Docker housekeeping: start/quit Docker Desktop, `ddev poweroff` after the last site stops, free space from old DDEV images
+- [x] Manifest format 2 and Orca's host API 1: panel ↔ worker messaging with pushes, the focused project's folder, opening links, a status bar item
 
 ## Waiting on Orca
 
 See [docs/ORCA-GAPS.md](docs/ORCA-GAPS.md).
 
-- [ ] Panel ↔ worker messaging (gap 1)
-- [ ] The active project's folder path (gap 2)
-- [ ] Orca SSH hosts: list and connect (gap 3)
-- [ ] Commands and file transfer over Orca SSH (gap 4)
-- [ ] Open URLs in Orca's browser (gap 5)
+- [ ] Orca SSH hosts: list and connect (gap 1)
+- [ ] Commands and file transfer over Orca SSH (gap 2)
+- [ ] A host API for Orca's browser, to replace the CLI call used for links (wishlist)
 
 ## After the gaps close
 

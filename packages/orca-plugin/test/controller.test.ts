@@ -6,10 +6,16 @@ import { Ddev, sha1File, writeSiteState, type CommandRunner, type ExecResult, ty
 import { LocalDockController } from '../src/worker/controller.js';
 import { OrcaApiPendingError } from '../src/shared/gaps.js';
 import type { OrcaHost, ProjectInfo, RemoteSession, SshHostInfo } from '../src/worker/orca/host.js';
-import type { PanelState } from '../src/shared/protocol.js';
+import { EVENT_STALE, EVENT_STATE, linkUrl, type PanelState } from '../src/shared/protocol.js';
 import { PluginOrcaHost } from '../src/worker/orca/pluginHost.js';
+import { toJson } from '../src/worker/main.js';
+import { statusItem } from '../src/worker/status.js';
+import { PostTransport } from '../src/worker/transport.js';
 
 const json = (o: unknown) => JSON.stringify(o);
+
+const hasUndefined = (v: unknown): boolean =>
+  v === undefined || (typeof v === 'object' && v !== null && Object.values(v).some(hasUndefined));
 
 /** A fake cPanel server: root session, one account, two WordPress sites and one non-WP domain. */
 function fakeServerSession(): RemoteSession {
@@ -62,7 +68,6 @@ class FakeHost implements OrcaHost {
   hosts: SshHostInfo[] = [];
   sessionGap = false;
   session?: RemoteSession;
-  opened: string[] = [];
   notes: string[] = [];
   store = new Map<string, unknown>();
   async activeProject() {
@@ -79,8 +84,12 @@ class FakeHost implements OrcaHost {
     if (this.sessionGap) throw new OrcaApiPendingError('ssh-session');
     return this.session ?? fakeServerSession();
   }
-  async openUrl(url: string) {
-    this.opened.push(url);
+  async setStatus() {}
+  browserOpens: [string, string][] = [];
+  browserWorks = true;
+  async openInOrcaBrowser(url: string, dir: string) {
+    this.browserOpens.push([url, dir]);
+    return this.browserWorks;
   }
   async notify(title: string) {
     this.notes.push(title);
@@ -219,6 +228,12 @@ describe('LocalDockController', () => {
     expect((await ctl.dispatch({ type: 'refresh' })).view).toBe('no-project');
   });
 
+  it('leaves projects on other machines alone', async () => {
+    host.project = { path: '/home/me/site', name: 'site', remote: true };
+    expect(await ctl.dispatch({ type: 'refresh' })).toMatchObject({ view: 'remote-project', projectName: 'site' });
+    expect((await ctl.dispatch({ type: 'set-up' })).notice?.text).toMatch(/local project/);
+  });
+
   it('offers no servers in a project that already has files', async () => {
     host.project = { path: dir, name: 'main' };
     host.hosts = [{ id: 'h1', label: 'Example server', host: 'server.example.com', port: 22, username: 'root', connected: true }];
@@ -328,6 +343,29 @@ describe('LocalDockController', () => {
     expect(s).toMatchObject({ view: 'awaiting-orca', gaps: [{ id: 'ssh-session' }], blockedAction: 'scan-sites' });
   });
 
+  it('keeps the site view when a server step is waiting on Orca, and answers in plain JSON', async () => {
+    host.project = { path: dir, name: 'p' };
+    host.hosts = [{ id: 'h1', label: 'x', host: 'server.example.com', port: 22, username: 'root', connected: true }];
+    host.sessionGap = true;
+    await writeSiteState(dir, {
+      version: 1, hostId: 'h1', account: 'exampleco', domain: 'example.com', docroot: '/home/exampleco/public_html',
+      productionUrl: 'https://example.com', tablePrefix: 'wp_', pulledAt: new Date().toISOString(), files: {},
+    });
+    await ctl.dispatch({ type: 'refresh' });
+    const s = await ctl.dispatch({ type: 'scan-changes' });
+    expect(s).toMatchObject({ view: 'tracking', notice: { kind: 'info', text: expect.stringMatching(/^Checking for changes needs the server.*can't use SSH yet/) } });
+    expect((await ctl.dispatch({ type: 'pull-db' })).notice?.text).toMatch(/^Pulling the live database needs the server/);
+    expect(s).not.toHaveProperty('serverBlocked', expect.anything());
+    host.listSshHosts = async () => {
+      throw new OrcaApiPendingError('ssh-hosts');
+    };
+    expect(await ctl.dispatch({ type: 'refresh' })).toMatchObject({ view: 'tracking', serverBlocked: expect.stringMatching(/can't use SSH yet/) });
+    // Optional fields are undefined in the state; Orca refuses request answers that aren't plain JSON.
+    expect(hasUndefined(s)).toBe(true);
+    expect(hasUndefined(toJson(s))).toBe(false);
+    expect(toJson(s)).toMatchObject({ view: 'tracking', site: { domain: 'example.com' } });
+  });
+
   it('switches to the source-control view for a project that holds a pulled site', async () => {
     host.project = { path: dir, name: 'p' };
     host.store.set('hostLabels', { h1: 'Example server' });
@@ -337,9 +375,15 @@ describe('LocalDockController', () => {
     });
     const s = await ctl.dispatch({ type: 'refresh' });
     expect(s).toMatchObject({ view: 'tracking', site: { domain: 'example.com', hostLabel: 'Example server' }, ddev: { status: 'not-installed' }, changes: null });
+    expect(linkUrl(s, 'live')).toBe('https://example.com');
+    expect(linkUrl(s, 'admin')).toBeNull();
+    expect(statusItem(s)).toMatchObject({ text: 'example.com', tone: 'neutral' });
+    expect(await ctl.openLink('live')).toEqual({ opened: true, url: 'https://example.com' });
+    expect(host.browserOpens).toEqual([['https://example.com', dir]]);
+    expect(await ctl.openLink('site')).toEqual({ opened: false, url: null });
+    host.browserWorks = false;
+    expect(await ctl.openLink('live')).toEqual({ opened: false, url: 'https://example.com' });
 
-    await ctl.dispatch({ type: 'open', target: 'live' });
-    expect(host.opened).toEqual(['https://example.com']);
     expect((await ctl.dispatch({ type: 'start' })).notice?.text).toMatch(/DDEV is not installed/);
   });
 
@@ -411,24 +455,94 @@ describe('LocalDockController', () => {
   });
 });
 
-describe('PluginOrcaHost (Orca 1.4.222)', () => {
-  const orca = (ctx: unknown) => ({
+describe('PluginOrcaHost (host API 1)', () => {
+  const workspaces = [
+    { id: 'identity:wt2:local:a', kind: 'worktree', name: 'main', project: 'my-site', path: 'D:/orca/my-site', branch: 'main', hostId: 'local' },
+    { id: 'identity:wt2:ssh:b', kind: 'worktree', name: 'main', project: 'remote-site', path: '/home/me/remote-site', branch: 'main', hostId: 'ssh:t1' },
+  ];
+  const orca = (ctx: unknown, calls: [string, unknown][] = []) => ({
     commands: { register: () => {} },
     events: { on: () => {} },
-    host: { call: async (m: string) => (m === 'workspace.readContext' ? ctx : { delivered: true }) },
+    panels: { handle: () => {}, post: () => {} },
+    host: {
+      call: async (m: string, p?: unknown) => {
+        calls.push([m, p]);
+        if (m === 'workspace.readContext') return ctx;
+        if (m === 'workspace.list') return { workspaces, truncated: false };
+        return { ok: true };
+      },
+    },
     log: () => {},
   });
 
-  it('treats no workspace as no project, and an open one as the project-path gap', async () => {
+  it('finds the focused workspace’s folder', async () => {
     expect(await new PluginOrcaHost(orca(null)).activeProject()).toBeNull();
-    await expect(new PluginOrcaHost(orca({ branch: 'main', displayName: 'p', terminals: [] })).activeProject()).rejects.toMatchObject({ gap: 'project-path' });
+    expect(await new PluginOrcaHost(orca({ workspaceId: 'gone', branch: 'main', displayName: 'p', terminals: [] })).activeProject()).toBeNull();
+    expect(await new PluginOrcaHost(orca({ workspaceId: 'identity:wt2:local:a', branch: 'main', displayName: 'main', terminals: [] })).activeProject())
+      .toEqual({ path: path.resolve('D:/orca/my-site'), name: 'my-site' });
+    expect(await new PluginOrcaHost(orca({ workspaceId: 'identity:wt2:ssh:b', branch: 'main', displayName: 'main', terminals: [] })).activeProject())
+      .toEqual({ path: '/home/me/remote-site', name: 'remote-site', remote: true });
   });
 
-  it('reports every SSH and browser capability as pending', async () => {
+  it('shows and hides the status bar item', async () => {
+    const calls: [string, unknown][] = [];
+    const h = new PluginOrcaHost(orca(null, calls));
+    await h.setStatus({ text: 'example.com', tooltip: 't', tone: 'success' });
+    await h.setStatus(null);
+    expect(calls).toEqual([
+      ['statusBar.update', { id: 'site', visible: true, text: 'example.com', tooltip: 't', tone: 'success' }],
+      ['statusBar.update', { id: 'site', visible: false }],
+    ]);
+  });
+
+  it('opens links in Orca’s browser through Orca’s CLI, without a shell', async () => {
+    const runs: { command: string; args: readonly string[] }[] = [];
+    let code = 0;
+    const runner = { run: async (command: string, args: readonly string[]) => (runs.push({ command, args }), { code, stdout: '', stderr: 'no Orca' }) };
+    const h = new PluginOrcaHost(orca(null), runner, ['/nowhere/orca']);
+    expect(await h.openInOrcaBrowser('https://example-com.ddev.site/', '/sites/example')).toBe(true);
+    expect(runs[0]).toEqual({ command: 'orca', args: ['tab', 'create', '--url', 'https://example-com.ddev.site/', '--worktree', 'path:/sites/example', '--json'] });
+    code = 1;
+    expect(await h.openInOrcaBrowser('https://example.com', '/sites/example')).toBe(false);
+    expect(await h.openInOrcaBrowser('file:///etc/passwd', '/sites/example')).toBe(false);
+    expect(runs).toHaveLength(2);
+  });
+
+  it('reports the SSH capabilities as pending', async () => {
     const h = new PluginOrcaHost(orca(null));
     await expect(h.listSshHosts()).rejects.toMatchObject({ gap: 'ssh-hosts' });
     await expect(h.connectSshHost('x')).rejects.toMatchObject({ gap: 'ssh-hosts' });
     await expect(h.openSession('x')).rejects.toMatchObject({ gap: 'ssh-session' });
-    await expect(h.openUrl('https://example.com')).rejects.toMatchObject({ gap: 'open-url' });
+  });
+});
+
+describe('PostTransport', () => {
+  const state = (revision: number, extra: object = {}): PanelState => ({ view: 'no-project', revision, job: null, notice: null, ...extra });
+
+  it('posts at most every 100 ms, always ending on the latest state', async () => {
+    vi.useFakeTimers();
+    try {
+      const posts: [string, unknown][] = [];
+      const t = new PostTransport((e, p) => posts.push([e, p]), undefined, () => Date.now());
+      t.publish(state(1));
+      t.publish(state(2));
+      t.publish(state(3));
+      expect(posts).toEqual([[EVENT_STATE, state(1)]]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(posts).toEqual([[EVENT_STATE, state(1)], [EVENT_STATE, state(3)]]);
+      expect(t.latest()).toEqual(state(3));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sends a stale notice for a state too large to post, and survives a failed post', () => {
+    const posts: [string, unknown][] = [];
+    const big = state(7, { notice: { kind: 'info', text: 'x'.repeat(300 * 1024) } });
+    new PostTransport((e, p) => posts.push([e, p])).publish(big);
+    expect(posts).toEqual([[EVENT_STALE, { revision: 7 }]]);
+    const errors: unknown[] = [];
+    new PostTransport(() => { throw new Error('rate_limited'); }, (e) => errors.push(e)).publish(state(1));
+    expect(errors).toHaveLength(1);
   });
 });

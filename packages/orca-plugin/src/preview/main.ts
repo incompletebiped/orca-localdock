@@ -26,6 +26,15 @@ const bridge: PanelBridge = {
     if (action.type === 'dismiss-notice') current = { ...current, notice: null, revision: current.revision + 1 };
     return current;
   },
+  onState: () => {},
+  openLink: async (target) => {
+    log.textContent = `open in Orca → ${target}
+` + log.textContent;
+    return { opened: true, url: null };
+  },
+  openUrl: async (url: string) => {
+    log.textContent = `open → ${url}\n` + log.textContent;
+  },
 };
 
 mountPanel(document.getElementById('app')!, bridge);

@@ -1,13 +1,13 @@
 /**
  * Messages between the panel (sandboxed iframe) and the plugin worker.
  *
- * The panel renders a PanelState snapshot and sends PanelActions back. Orca
- * 1.4.222 has no channel for either direction yet (see docs/ORCA-GAPS.md,
- * gap "panel-bridge"); this protocol is what the channel will carry. Actions
- * are validated in the worker (actionSchema.ts) because nothing from the panel
- * is trusted. This file holds types only, so the panel bundle stays small.
+ * The panel asks the worker with Orca's `plugin.request` (REQUEST_STATE,
+ * REQUEST_DISPATCH), and the worker pushes each new PanelState with
+ * `orca.panels.post` (EVENT_STATE). Actions are validated in the worker
+ * (actionSchema.ts) because nothing from the panel is trusted. This file holds
+ * types and constants only, so the panel bundle stays small.
  */
-export type GapId = 'panel-bridge' | 'project-path' | 'ssh-hosts' | 'ssh-session' | 'open-url';
+export type GapId = 'ssh-hosts' | 'ssh-session';
 
 export interface GapInfo {
   id: GapId;
@@ -86,6 +86,8 @@ export type PanelView =
   /** An Orca capability LocalDock needs isn't available yet. */
   | { view: 'awaiting-orca'; gaps: GapInfo[]; blockedAction?: string }
   | { view: 'no-project' }
+  /** The focused project lives on an SSH host or another Orca; DDEV runs sites on this computer only. */
+  | { view: 'remote-project'; projectName: string }
   /** An empty project LocalDock hasn't been asked to use yet. */
   | { view: 'set-up'; projectName: string }
   /** The open project already has files, so it can't take a pulled site. */
@@ -106,6 +108,8 @@ export type PanelView =
       lastBackup?: string;
       /** No DDEV site and no other container is running, so Docker Desktop could be quit. */
       dockerIdle?: boolean;
+      /** Why steps that need the server can't run here, or absent when they can. */
+      serverBlocked?: string;
     }
   | { view: 'error'; message: string };
 
@@ -118,6 +122,40 @@ export type PanelState = PanelView & {
 
 export type { PanelAction, PanelActionInput } from './actionSchema.js';
 
-/** Command ids the panel will call once Orca lets panels invoke their own worker. */
-export const COMMAND_STATE = 'localdock.state';
-export const COMMAND_DISPATCH = 'localdock.dispatch';
+export type LinkTarget = 'site' | 'admin' | 'mailpit' | 'live';
+
+/**
+ * A link button. The panel asks the worker to open it in Orca's browser
+ * (REQUEST_OPEN), and opens the default browser itself if that fails, since
+ * Orca only opens an outside URL from a click in the panel's own frame.
+ */
+export interface OpenLink {
+  type: 'open';
+  target: LinkTarget;
+}
+
+/** The URL a link button opens, or null when the local site isn't running yet. */
+export function linkUrl(view: PanelView, target: LinkTarget): string | null {
+  if (view.view !== 'tracking') return null;
+  const { ddev, site } = view;
+  if (target === 'live') return site.productionUrl;
+  if (target === 'mailpit') return ddev.mailpitUrl ?? null;
+  if (!ddev.url) return null;
+  return target === 'admin' ? `${ddev.url.replace(/\/$/, '')}/wp-admin/` : ddev.url;
+}
+
+/** `plugin.request` names the worker answers with `orca.panels.handle`. */
+export const REQUEST_STATE = 'state';
+export const REQUEST_DISPATCH = 'dispatch';
+/** Input `{ target: LinkTarget }`, answer OpenLinkResult. */
+export const REQUEST_OPEN = 'open';
+
+/** `opened: false` with a URL: Orca's browser wasn't reachable, so the panel opens the default browser. */
+export interface OpenLinkResult {
+  opened: boolean;
+  url: string | null;
+}
+/** Worker → panel push (`orca.panels.post`): the full PanelState. */
+export const EVENT_STATE = 'state';
+/** Worker → panel push when the state is too large to post: the panel asks for it instead. */
+export const EVENT_STALE = 'state.stale';

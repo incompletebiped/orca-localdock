@@ -9,6 +9,21 @@ export interface RunOptions {
   signal?: AbortSignal;
   /** Environment for the program (defaults to this process's). */
   env?: NodeJS.ProcessEnv;
+  /** Called with each non-empty line of output (stdout and stderr) as it arrives, for progress. */
+  onLine?: (line: string) => void;
+}
+
+/** Split a stream's chunks into lines for `onLine`, dropping terminal color codes. */
+function lineSplitter(onLine: (line: string) => void): (chunk: Buffer) => void {
+  let rest = '';
+  return (chunk) => {
+    const lines = (rest + chunk.toString('utf-8')).split(/\r?\n|\r/);
+    rest = lines.pop() ?? '';
+    for (const line of lines) {
+      const clean = line.replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g, '').trim();
+      if (clean) onLine(clean);
+    }
+  };
 }
 
 export interface RunResult {
@@ -32,6 +47,12 @@ export const processRunner: CommandRunner = {
       if (options.stdout) proc.stdout.pipe(options.stdout, { end: false });
       else proc.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf-8')));
       proc.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf-8')));
+      if (options.onLine) {
+        const outLines = lineSplitter(options.onLine);
+        const errLines = lineSplitter(options.onLine);
+        proc.stdout.on('data', outLines);
+        proc.stderr.on('data', errLines);
+      }
       if (options.stdin) options.stdin.pipe(proc.stdin);
       else proc.stdin.end();
       proc.on('error', (err) => resolve({ code: 127, stdout, stderr: err.message }));

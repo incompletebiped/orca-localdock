@@ -13,8 +13,9 @@ const sites = [
 ];
 
 export const FIXTURES: Record<string, PanelState> = {
-  'Waiting on Orca': { ...base, view: 'awaiting-orca', gaps: [GAPS['panel-bridge'], GAPS['project-path'], GAPS['ssh-hosts'], GAPS['ssh-session']] },
+  'Waiting on Orca': { ...base, view: 'awaiting-orca', gaps: [GAPS['ssh-hosts'], GAPS['ssh-session']], blockedAction: 'set-up' },
   'No project': { ...base, view: 'no-project' },
+  'Remote project': { ...base, view: 'remote-project', projectName: 'my-app' },
   'Project not empty': { ...base, view: 'project-not-empty', projectName: 'my-app' },
   'Set up': { ...base, view: 'set-up', projectName: 'new-site' },
   'No SSH hosts': { ...base, view: 'no-hosts' },
@@ -88,4 +89,9 @@ export const FIXTURES: Record<string, PanelState> = {
     changes: { serverCheckedAt: new Date().toISOString(), rows: [] },
     dbGroups: null,
   },
+};
+
+FIXTURES['Source control (no SSH yet)'] = {
+  ...(FIXTURES['Source control'] as Extract<PanelState, { view: 'tracking' }>),
+  serverBlocked: "Orca plugins can't use SSH yet (Orca SSH hosts).",
 };

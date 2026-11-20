@@ -208,7 +208,11 @@ export async function startSite(ctx: OperationContext, projectDir: string, opts:
   const state = await requireState(projectDir);
   await writeDevMuPlugin(projectDir, state);
   ctx.progress({ phase: 'ddev', message: 'Starting DDEV…' });
-  await ctx.ddev.start(projectDir, ctx.signal);
+  const started = Date.now();
+  await ctx.ddev.start(projectDir, ctx.signal, (line) => {
+    const seconds = Math.round((Date.now() - started) / 1000);
+    ctx.progress({ phase: 'ddev', message: `${line.length > 140 ? `${line.slice(0, 140)}…` : line} (${seconds} s)` });
+  });
   const info = await ctx.ddev.describe(projectDir);
   if (!info.url) throw new LocalDockError('DDEV started but reported no site URL', 'DOCKER_START_FAILED');
 

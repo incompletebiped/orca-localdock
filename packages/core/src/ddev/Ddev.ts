@@ -10,7 +10,7 @@ import { byteCounter, type ByteProgress } from '../util/format.js';
 import { assertValid, isValidDbIdentifier, slugify } from '../util/shell.js';
 import { detachedLauncher, processRunner, type AppLauncher, type CommandRunner, type RunOptions, type RunResult } from './runner.js';
 
-type Io = Pick<RunOptions, 'stdin' | 'stdout' | 'signal'>;
+type Io = Pick<RunOptions, 'stdin' | 'stdout' | 'signal' | 'onLine'>;
 
 export type DdevStatus = 'not-configured' | 'stopped' | 'starting' | 'running' | 'paused' | 'unhealthy' | 'unknown';
 
@@ -258,11 +258,12 @@ export class Ddev {
     await this.must(projectDir, args, 'ddev config');
   }
 
-  async start(projectDir: string, signal?: AbortSignal): Promise<void> {
+  /** `onLine` gets each line DDEV prints while it starts (a first start can take minutes). */
+  async start(projectDir: string, signal?: AbortSignal, onLine?: (line: string) => void): Promise<void> {
     if (this.platform === 'win32' && !(await this.shareProjectDrive(projectDir))) {
       this.log.warn(`Couldn't make ${path.win32.parse(projectDir).root} visible to Docker; folders DDEV mounts from it may look empty`);
     }
-    await this.must(projectDir, ['start', '-y'], 'ddev start', { signal });
+    await this.must(projectDir, ['start', '-y'], 'ddev start', { signal, onLine });
   }
 
   /**

@@ -26,7 +26,6 @@ export const panelActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('quit-docker') }),
   z.object({ type: z.literal('keep-docker') }),
   z.object({ type: z.literal('free-space') }),
-  z.object({ type: z.literal('open'), target: z.enum(['site', 'admin', 'mailpit', 'live']) }),
   z.object({ type: z.literal('load-db-groups') }),
   z.object({ type: z.literal('push-db'), groups: z.array(tableGroup).min(1) }),
   z.object({ type: z.literal('pull-db') }),
@@ -36,4 +35,7 @@ export const panelActionSchema = z.discriminatedUnion('type', [
 ]);
 
 export type PanelAction = z.infer<typeof panelActionSchema>;
+
+/** Input of the panel's `open` request: which link button was clicked. */
+export const openLinkSchema = z.object({ target: z.enum(['site', 'admin', 'mailpit', 'live']) });
 export type PanelActionInput = z.input<typeof panelActionSchema>;

@@ -72,6 +72,11 @@ function renderView(state: PanelState, ui: UiState): string {
       return renderAwaitingOrca(state.gaps, state.blockedAction);
     case 'no-project':
       return empty('No project open', 'Create or open a project in Orca, then come back here. LocalDock pulls a WordPress site into an empty project.');
+    case 'remote-project':
+      return empty(
+        'This project isn’t on this computer',
+        `“${state.projectName}” lives on another machine. DDEV runs sites on this computer, so LocalDock needs a local project. Create an empty one in Orca and open it.`,
+      );
     case 'project-not-empty':
       return empty(
         'This project already has files',
@@ -184,6 +189,9 @@ function renderTracking(state: Extract<PanelState, { view: 'tracking' }>, ui: Ui
   const { site, ddev, changes } = state;
   const running = ddev.status === 'running';
   const busy = Boolean(state.job);
+  // Steps that need the server: off (with the reason as a tooltip) when this build can't reach one.
+  const blocked = state.serverBlocked;
+  const server = (disabled: boolean) => ({ disabled: disabled || Boolean(blocked), ...(blocked ? { title: blocked } : {}) });
   const ddevLine =
     ddev.status === 'not-installed'
       ? `<p class="notice notice-info">Install <strong>DDEV</strong> to run this site locally (ddev.com).</p>`
@@ -191,7 +199,7 @@ function renderTracking(state: Extract<PanelState, { view: 'tracking' }>, ui: Ui
         ? `<div class="notice notice-info"><span>Docker isn’t running, so the local site can’t start.</span>${button('Start Docker Desktop', { type: 'start-docker' }, { primary: true, disabled: busy })}${button('Check again', { type: 'refresh' }, { disabled: busy })}</div>`
         : `<div class="ddev">
           <span class="dot ${running ? 'dot-on' : 'dot-off'}"></span>
-          <span class="grow">${running ? `Running at <code>${esc(ddev.url ?? '')}</code>` : `Local site ${esc(ddev.status.replace('-', ' '))}`}</span>
+          <span class="grow">${running ? `Running at <button class="link" data-action="${esc(JSON.stringify({ type: 'open', target: 'site' }))}" title="Open in Orca’s browser">${esc(ddev.url ?? '')}</button>` : `Local site ${esc(ddev.status.replace('-', ' '))}`}</span>
           ${running ? button('■ Stop', { type: 'stop' }, { disabled: busy }) : button('▶ Start', { type: 'start' }, { primary: true, disabled: busy })}
         </div>
         <div class="links">
@@ -214,14 +222,14 @@ function renderTracking(state: Extract<PanelState, { view: 'tracking' }>, ui: Ui
   const changeSections = changes
     ? [
         section('Local changes', push.length, changeList(push, 'local', ui),
-          button('Push selected', { type: 'push-files', paths: selectedOf(push) }, { primary: true, disabled: busy || selectedOf(push).length === 0 }) +
-          button('Push all', { type: 'push-files', paths: allOf(push) }, { disabled: busy })),
+          button('Push selected', { type: 'push-files', paths: selectedOf(push) }, { primary: true, ...server(busy || selectedOf(push).length === 0) }) +
+          button('Push all', { type: 'push-files', paths: allOf(push) }, server(busy))),
         section('Server changes', pull.length, changeList(pull, 'remote', ui),
-          button('Pull selected', { type: 'pull-files', paths: selectedOf(pull) }, { disabled: busy || selectedOf(pull).length === 0 }) +
-          button('Pull all', { type: 'pull-files', paths: allOf(pull) }, { disabled: busy })),
+          button('Pull selected', { type: 'pull-files', paths: selectedOf(pull) }, server(busy || selectedOf(pull).length === 0)) +
+          button('Pull all', { type: 'pull-files', paths: allOf(pull) }, server(busy))),
         section('Changed on both sides', conflicts.length, changeList(conflicts, 'local', ui),
-          button('Keep local (push)', { type: 'push-files', paths: selectedOf(conflicts), allowConflicts: true }, { danger: true, disabled: busy || selectedOf(conflicts).length === 0 }) +
-          button('Take server (pull)', { type: 'pull-files', paths: selectedOf(conflicts), allowConflicts: true }, { danger: true, disabled: busy || selectedOf(conflicts).length === 0 })),
+          button('Keep local (push)', { type: 'push-files', paths: selectedOf(conflicts), allowConflicts: true }, { danger: true, ...server(busy || selectedOf(conflicts).length === 0) }) +
+          button('Take server (pull)', { type: 'pull-files', paths: selectedOf(conflicts), allowConflicts: true }, { danger: true, ...server(busy || selectedOf(conflicts).length === 0) })),
       ].join('')
     : `<p class="muted small pad">Looking for local changes…</p>`;
 
@@ -230,13 +238,15 @@ function renderTracking(state: Extract<PanelState, { view: 'tracking' }>, ui: Ui
       <p class="muted small">${esc(site.hostLabel)} · ${esc(site.account)} · pulled ${esc(timeAgo(site.pulledAt))}${site.lastPushedAt ? ` · pushed ${esc(timeAgo(site.lastPushedAt))}` : ''}</p>
     </header>
     ${ddevLine}
-    <div class="toolbar">${button('⟳ Check for changes', { type: 'scan-changes' }, { primary: true, disabled: busy })}<span class="grow"></span><span class="muted small">${changes ? (changes.serverCheckedAt ? `server checked ${esc(timeAgo(changes.serverCheckedAt))}` : 'server not checked yet') : ''}</span></div>
+    <div class="toolbar">${button('⟳ Check for changes', { type: 'scan-changes' }, { primary: true, ...server(busy) })}<span class="grow"></span><span class="muted small">${changes ? (changes.serverCheckedAt ? `server checked ${esc(timeAgo(changes.serverCheckedAt))}` : 'server not checked yet') : ''}</span></div>
+    ${blocked ? `<p class="muted small server-off">Server steps are off: ${esc(blocked)} Starting, stopping, links and the local change list still work.</p>` : ''}
     ${changeSections}
-    ${renderDatabase(state.dbGroups, state.lastBackup, ui, busy)}
+    ${renderDatabase(state.dbGroups, state.lastBackup, ui, busy, blocked)}
     <p class="muted small pad maintenance">${button('Free up space', { type: 'free-space' }, { disabled: busy, title: 'Remove DDEV images left by older DDEV versions' })}</p>`;
 }
 
-function renderDatabase(groups: TableGroupOption[] | null, lastBackup: string | undefined, ui: UiState, busy: boolean): string {
+function renderDatabase(groups: TableGroupOption[] | null, lastBackup: string | undefined, ui: UiState, busy: boolean, blocked?: string): string {
+  const server = (disabled: boolean, title?: string) => ({ disabled: disabled || Boolean(blocked), ...(blocked || title ? { title: blocked ?? title } : {}) });
   const chosen = groups ? groups.filter((g) => ui.dbGroups.has(g.id)).map((g) => g.id) : [];
   const picker = !ui.dbOpen
     ? ''
@@ -250,13 +260,13 @@ function renderDatabase(groups: TableGroupOption[] | null, lastBackup: string | 
             )
             .join('')}
           <p class="muted small">The live database is backed up on the server before anything is overwritten.</p>
-          ${button('Push selected tables', { type: 'push-db', groups: chosen }, { danger: true, disabled: busy || chosen.length === 0 })}
+          ${button('Push selected tables', { type: 'push-db', groups: chosen }, { danger: true, ...server(busy || chosen.length === 0) })}
         </div>`;
   return `<details class="section"${ui.dbOpen ? ' open' : ''} data-ui="dbOpen"><summary><span class="grow">Database</span></summary>
     <div class="section-actions">
-      ${button('Pull live database', { type: 'pull-db' }, { disabled: busy, title: 'Replace the local database with a copy of the live one' })}
-      ${ui.dbOpen ? '' : button('Push database…', 'open-db')}
-      ${lastBackup ? button('Roll back last push', { type: 'rollback-db', backupPath: lastBackup }, { danger: true, disabled: busy }) : ''}
+      ${button('Pull live database', { type: 'pull-db' }, server(busy, 'Replace the local database with a copy of the live one'))}
+      ${ui.dbOpen ? '' : button('Push database…', 'open-db', server(false))}
+      ${lastBackup ? button('Roll back last push', { type: 'rollback-db', backupPath: lastBackup }, { danger: true, ...server(busy) }) : ''}
     </div>
     ${picker}
   </details>`;

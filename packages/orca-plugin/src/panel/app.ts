@@ -1,16 +1,12 @@
-import { GAPS } from '../shared/gaps.js';
-import type { PanelActionInput, PanelState } from '../shared/protocol.js';
+import { linkUrl, type OpenLink, type PanelActionInput, type PanelState } from '../shared/protocol.js';
 import { BridgeUnavailableError, type PanelBridge } from './bridge.js';
 import { newUiState, render, type UiState } from './render.js';
 
-const POLL_BUSY_MS = 1000;
-const POLL_IDLE_MS = 5000;
+/** The worker pushes every change; these slow polls only catch a push that got lost. */
+const POLL_BUSY_MS = 3000;
+const POLL_IDLE_MS = 15000;
 
-/**
- * Wires the rendered panel to a bridge: clicks become actions, and state is
- * polled (Orca allows 30 panel messages per 10 s, so polling stays well
- * under that).
- */
+/** Wires the rendered panel to a bridge: clicks become actions, and the worker's pushes repaint it. */
 export function mountPanel(root: HTMLElement, bridge: PanelBridge): void {
   const ui: UiState = newUiState();
   let state: PanelState = { view: 'loading', revision: 0, job: null, notice: null };
@@ -27,12 +23,16 @@ export function mountPanel(root: HTMLElement, bridge: PanelBridge): void {
   };
 
   const unavailable = (err: unknown) => {
-    state = { view: 'awaiting-orca', gaps: [GAPS['panel-bridge']], revision: state.revision, job: null, notice: null };
-    if (!(err instanceof BridgeUnavailableError)) state.notice = { kind: 'error', text: String((err as Error)?.message ?? err) };
+    const text = String((err as Error)?.message ?? err);
+    if (err instanceof BridgeUnavailableError) state = { view: 'error', message: text, revision: state.revision, job: null, notice: null };
+    else state = { ...state, notice: { kind: 'error', text } };
     paint();
+    schedule();
   };
 
   const accept = (next: PanelState) => {
+    // Pushes and request answers can cross; never step back to an older state.
+    if (next.revision < state.revision && state.view !== 'error') return schedule();
     if (next.revision !== state.revision || next.view !== state.view) {
       if (next.view !== state.view) ui.selected.clear();
       state = next;
@@ -49,9 +49,21 @@ export function mountPanel(root: HTMLElement, bridge: PanelBridge): void {
   const send = (action: PanelActionInput) => {
     if (action.type === 'load-db-groups') ui.dbOpen = true;
     void bridge.dispatch(action).then(accept, unavailable);
-    // Poll quickly while the action runs, so progress shows up.
-    clearTimeout(timer);
-    timer = setTimeout(() => void bridge.getState().then(accept, unavailable), POLL_BUSY_MS);
+  };
+
+  const openLink = (link: OpenLink) => {
+    const url = linkUrl(state, link.target);
+    const failed = (text: string) => {
+      state = { ...state, notice: { kind: 'error', text } };
+      paint();
+    };
+    if (!url) return failed('Start the local site first.');
+    // Orca's browser first; the default browser if Orca's CLI couldn't be reached.
+    bridge
+      .openLink(link.target)
+      .then((r) => (r.opened ? undefined : bridge.openUrl(r.url ?? url)))
+      .catch(() => bridge.openUrl(url))
+      .catch((err: Error) => failed(err.message));
   };
 
   /** Text for actions that need an inline confirmation first. */
@@ -82,12 +94,13 @@ export function mountPanel(root: HTMLElement, bridge: PanelBridge): void {
       send({ type: 'load-db-groups' });
       return;
     }
-    let action: PanelActionInput;
+    let action: PanelActionInput | OpenLink;
     try {
-      action = JSON.parse(raw) as PanelActionInput;
+      action = JSON.parse(raw) as PanelActionInput | OpenLink;
     } catch {
       return;
     }
+    if (action.type === 'open') return openLink(action);
     const text = confirmText(action);
     if (text) {
       ui.confirming = { action: raw, text };
@@ -122,6 +135,7 @@ export function mountPanel(root: HTMLElement, bridge: PanelBridge): void {
   });
 
   paint();
+  bridge.onState(accept);
   void bridge.getState().then((s) => {
     // Default the database picker to the groups that are safe to push.
     if (s.view === 'tracking' && s.dbGroups) for (const g of s.dbGroups) if (g.pushByDefault) ui.dbGroups.add(g.id);

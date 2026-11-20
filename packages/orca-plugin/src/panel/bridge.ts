@@ -1,83 +1,93 @@
-import { COMMAND_DISPATCH, COMMAND_STATE, type PanelActionInput, type PanelState } from '../shared/protocol.js';
+import {
+  EVENT_STALE,
+  EVENT_STATE,
+  REQUEST_DISPATCH,
+  REQUEST_OPEN,
+  REQUEST_STATE,
+  type LinkTarget,
+  type OpenLinkResult,
+  type PanelActionInput,
+  type PanelState,
+} from '../shared/protocol.js';
 
 /** How the panel reaches the worker. */
 export interface PanelBridge {
   getState(): Promise<PanelState>;
   dispatch(action: PanelActionInput): Promise<PanelState>;
+  /** Called with each state the worker pushes. */
+  onState(listener: (state: PanelState) => void): void;
+  /** Ask the worker to open a link button in Orca's browser. */
+  openLink(target: LinkTarget): Promise<OpenLinkResult>;
+  /** Open a URL in the default browser. Must run soon after a click in the panel. */
+  openUrl(url: string): Promise<void>;
 }
 
-/** Thrown when Orca rejects the request because panels can't call their worker yet (gap panel-bridge). */
+/** Thrown when this Orca can't connect the panel to its worker. */
 export class BridgeUnavailableError extends Error {
   constructor(detail: string) {
-    super(`Orca doesn't let plugin panels call their worker yet (${detail})`);
+    super(`LocalDock's panel can't reach its worker (${detail}). Update Orca, or restart the plugin.`);
     this.name = 'BridgeUnavailableError';
   }
 }
 
-interface ActionResult {
-  type: 'orca-panel-action-result';
-  requestId: string;
-  ok: boolean;
-  value?: unknown;
-  errorCode?: string;
-  error?: string;
+interface OrcaFrameError extends Error {
+  code?: string;
 }
 
-/**
- * Bridge over Orca's panel postMessage protocol. It invokes the worker's
- * `localdock.state` / `localdock.dispatch` commands through a panel action
- * named `commands.invoke`. That action doesn't exist in Orca 1.4.222 (only
- * workspace.readContext, terminal.sendText and notifications.show do); it
- * matches the shape proposed in stablyai/orca PR #25256. When Orca ships the
- * capability under another name, only this class changes.
- */
+/** The parts of Orca's frame API (`window.orca`) the panel uses. */
+interface OrcaFrame {
+  plugin?: {
+    request(name: string, input?: unknown, opts?: { timeoutMs?: number }): Promise<unknown>;
+    on(event: string, fn: (payload: unknown) => void): { dispose(): void };
+  };
+  shell?: { openExternal(url: string): Promise<{ opened: boolean }> };
+}
+
+/** Codes meaning the channel itself is missing or broken, rather than one request failing. */
+const UNAVAILABLE = new Set(['unknown_method', 'not_permitted', 'unavailable', 'consent_required']);
+
+/** Bridge over Orca's frame API: `orca.plugin.request` to the worker, `orca.plugin.on` for its pushes. */
 export class OrcaPanelBridge implements PanelBridge {
-  private seq = 0;
-  private readonly pending = new Map<string, (r: ActionResult) => void>();
+  private readonly orca: OrcaFrame | undefined;
 
-  constructor(private readonly win: Window = window) {
-    win.addEventListener('message', (event: MessageEvent) => {
-      const data = event.data as ActionResult | undefined;
-      if (event.source !== win.parent || !data || data.type !== 'orca-panel-action-result') return;
-      const resolve = this.pending.get(data.requestId);
-      if (resolve) {
-        this.pending.delete(data.requestId);
-        resolve(data);
-      }
-    });
+  constructor(win: Window = window) {
+    this.orca = (win as unknown as { orca?: OrcaFrame }).orca;
   }
 
-  private call(action: string, params: unknown, timeoutMs = 60_000): Promise<ActionResult> {
-    const requestId = `ld-${++this.seq}`;
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(requestId);
-        reject(new BridgeUnavailableError('no reply'));
-      }, timeoutMs);
-      this.pending.set(requestId, (r) => {
-        clearTimeout(timer);
-        resolve(r);
-      });
-      // The panel frame has an opaque origin, so '*' is the only usable target; Orca checks the sending window.
-      this.win.parent.postMessage({ type: 'orca-panel-action', requestId, action, params }, '*');
-    });
-  }
-
-  private async invoke(commandId: string, args?: unknown): Promise<PanelState> {
-    const r = await this.call('commands.invoke', { commandId, ...(args === undefined ? {} : { args }) });
-    if (!r.ok) {
-      // Unknown action / capability means this Orca build predates the API.
-      throw new BridgeUnavailableError(r.errorCode ?? r.error ?? 'rejected');
+  private async request<T = PanelState>(name: string, input?: unknown): Promise<T> {
+    const plugin = this.orca?.plugin;
+    if (!plugin) throw new BridgeUnavailableError('no orca.plugin');
+    try {
+      return (await plugin.request(name, input, { timeoutMs: 60_000 })) as T;
+    } catch (err) {
+      const code = (err as OrcaFrameError).code;
+      if (code && UNAVAILABLE.has(code)) throw new BridgeUnavailableError(code);
+      throw err;
     }
-    const value = r.value as { value?: unknown } | PanelState;
-    return ((value as { value?: unknown }).value ?? value) as PanelState;
   }
 
   getState(): Promise<PanelState> {
-    return this.invoke(COMMAND_STATE);
+    return this.request(REQUEST_STATE);
   }
 
   dispatch(action: PanelActionInput): Promise<PanelState> {
-    return this.invoke(COMMAND_DISPATCH, action);
+    return this.request(REQUEST_DISPATCH, action);
+  }
+
+  openLink(target: LinkTarget): Promise<OpenLinkResult> {
+    return this.request<OpenLinkResult>(REQUEST_OPEN, { target });
+  }
+
+  onState(listener: (state: PanelState) => void): void {
+    const plugin = this.orca?.plugin;
+    if (!plugin) return;
+    plugin.on(EVENT_STATE, (s) => listener(s as PanelState));
+    // Too large to post: fetch it.
+    plugin.on(EVENT_STALE, () => void this.getState().then(listener, () => {}));
+  }
+
+  async openUrl(url: string): Promise<void> {
+    if (!this.orca?.shell) throw new Error('Opening links needs the Orca desktop app.');
+    await this.orca.shell.openExternal(url);
   }
 }

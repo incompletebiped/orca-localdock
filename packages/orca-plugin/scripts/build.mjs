@@ -3,7 +3,8 @@
 //
 //   dist/orca-plugin.json   manifest
 //   dist/worker.mjs         worker bundle (engine included)
-//   dist/panel/index.html   panel, with its script and styles inlined (Orca's panel CSP allows inline only)
+//   dist/panel/index.html   panel, with its script and styles inlined (the desktop app could load them by
+//                           relative URL, but browser clients of `orca serve` allow inline only)
 import { build } from 'esbuild';
 import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';

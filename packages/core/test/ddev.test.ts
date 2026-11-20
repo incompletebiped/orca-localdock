@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { Ddev, ddevEnv, ddevInstallLocations, dockerDesktopLocations, normalizeStatus } from '../src/ddev/Ddev.js';
-import type { CommandRunner, RunResult } from '../src/ddev/runner.js';
+import { processRunner, type CommandRunner, type RunResult } from '../src/ddev/runner.js';
 import { devMuPlugin, localWpConfig, sanitizeHtaccess, uploadsProxyHtaccess } from '../src/ddev/templates.js';
 import { phpVersionFromHtaccess } from '../src/operations/site.js';
 import { PathMatcher } from '../src/util/glob.js';
@@ -114,6 +114,31 @@ describe('projects on drives Docker Desktop doesn’t mount', () => {
     await ddev.start('E:\\sites\\example');
     expect(calls.map((c) => c.args[0])).toEqual(['-d', 'start']);
     expect(await ddev.shareProjectDrive('\\\\server\\share\\site')).toBe(true);
+  });
+});
+
+describe('progress while DDEV starts', () => {
+  it('passes the start progress callback to the runner', async () => {
+    const seen: unknown[] = [];
+    const runner: CommandRunner = {
+      async run(_command, args, options) {
+        if (args[0] === 'start') options?.onLine?.('Waiting for containers to become ready');
+        seen.push(args[0]);
+        return { code: 0, stdout: '', stderr: '' };
+      },
+    };
+    const lines: string[] = [];
+    await new Ddev(runner, { binary: 'ddev', platform: 'linux' }).start('/sites/example', undefined, (l) => lines.push(l));
+    expect(lines).toEqual(['Waiting for containers to become ready']);
+  });
+
+  it('reports each output line of a real process, without color codes', async () => {
+    const lines: string[] = [];
+    const script = `process.stdout.write('\\x1b[32mStarting\\x1b[0m web\\npart'); setTimeout(() => { process.stdout.write('ial\\n'); process.stderr.write('warn\\r\\n\\n'); }, 20)`;
+    const r = await processRunner.run(process.execPath, ['-e', script], { onLine: (l) => lines.push(l) });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('Starting');
+    expect(lines.sort()).toEqual(['Starting web', 'partial', 'warn']);
   });
 });
 

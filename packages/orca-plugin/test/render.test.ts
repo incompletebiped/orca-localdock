@@ -47,6 +47,18 @@ describe('panel rendering', () => {
     expect(html).toContain('Changed on both sides');
     expect(html).toMatch(/push-files[^>]*style\.css/);
     expect(html).toContain('■ Stop');
+    expect(html).toMatch(/class="link" data-action="[^"]*&quot;open&quot;[^"]*&quot;site&quot;/);
+  });
+
+  it('greys out the steps that need the server when it can’t be reached, and says why', () => {
+    const html = render(FIXTURES['Source control (no SSH yet)']!, newUiState());
+    expect(html).toContain('Server steps are off');
+    for (const type of ['scan-changes', 'push-files', 'pull-files', 'pull-db']) {
+      expect(html, type).toMatch(new RegExp(`${type}[^>]*disabled`));
+    }
+    expect(html).toMatch(/open-db[^>]*disabled/);
+    expect(html).not.toMatch(/&quot;start&quot;[^>]*disabled|&quot;stop&quot;[^>]*disabled/);
+    expect(render(FIXTURES['Source control']!, newUiState())).not.toContain('Server steps are off');
   });
 
   it('shows an inline confirmation instead of a dialog (the panel sandbox blocks confirm())', () => {
