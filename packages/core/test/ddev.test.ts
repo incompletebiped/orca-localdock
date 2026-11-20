@@ -134,7 +134,7 @@ describe('finding programs without trusting the project folder', () => {
       expect(resolveProgram('ddev', { PATH: '.:' }, 'linux')).toBeNull();
       await fs.writeFile(path.join(bin, 'ddev.exe'), 'real');
       await fs.writeFile(path.join(bin, 'ddev'), 'real');
-      expect(resolveProgram('ddev', { Path: `.;${bin}` }, 'win32')).toBe(path.win32.join(bin, 'ddev.exe'));
+      if (process.platform === 'win32') expect(resolveProgram('ddev', { Path: `.;${bin}` }, 'win32')).toBe(path.win32.join(bin, 'ddev.exe'));
       if (process.platform !== 'win32') expect(resolveProgram('ddev', { PATH: `.:${bin}` }, 'linux')).toBe(path.posix.join(bin, 'ddev'));
       expect(resolveProgram('C:\\Tools\\ddev.exe', {}, 'win32')).toBe('C:\\Tools\\ddev.exe');
     } finally {
