@@ -16,6 +16,8 @@
 - [x] Change lists grouped by WordPress core, plugin and theme, with one-click group push/pull; long lists stay fast
 - [x] Cancel a DDEV start
 - [x] Security review and fixes (see SECURITY.md)
+- [x] Resumable pulls; a dropped connection fails the step instead of hanging
+- [x] Parallel archive downloads for distant servers
 
 ## Next
 
@@ -45,7 +47,7 @@
 
 See [docs/ORCA-GAPS.md](docs/ORCA-GAPS.md).
 
-- [ ] Orca's SSH hosts and connections for plugins (LocalDock uses the SSH config until then)
+- [ ] Orca's SSH hosts and connections for plugins (LocalDock uses the SSH config until then). What LocalDock would gain is in the README's "Roadmap: using Orca's SSH hosts".
 - [ ] A host API for Orca's browser, to replace the CLI call used for links
 - [ ] An "Add Project" source, and Source Control provider integration
 

@@ -7,7 +7,7 @@
 1. **Create a new, empty project** in Orca, open the LocalDock tab, and click **Use LocalDock in this project**. LocalDock leaves projects you don’t set up alone.
 2. **Connect to a server.** LocalDock uses the hosts in your SSH config (`~/.ssh/config`), with the same keys, agent and `known_hosts` as `ssh` in a terminal. Add a `Host` that points at a cPanel server and connect to it once with `ssh <alias>`, so its key is trusted: log in as `root` to see every account on a WHM server, or as a cPanel account user to see that account's sites.
 3. **Pick a WordPress site.** LocalDock scans the server (via cPanel's own `whmapi1`/`uapi`) and lists every WordPress install it finds.
-4. **Pull it.** The site's files and database come down into the project, and **[DDEV](https://ddev.com)** runs it locally, with the same PHP and database versions as the server. Media (`wp-content/uploads`) stays on the server: the local site loads missing images from the live one.
+4. **Pull it.** The site's files and database come down into the project, and **[DDEV](https://ddev.com)** runs it locally, with the same PHP and database versions as the server. Media (`wp-content/uploads`) stays on the server: the local site loads missing images from the live one. Files come down as compressed archives, several side by side, which helps a lot on a distant server. If a pull stops part-way (the connection drops, you cancel, Orca closes), the tab offers **Resume pull**: files that are still current are kept, and only the rest (and the database) are downloaded again.
 5. **Work like Source Control.** Once a site is pulled, the tab stops listing server sites and becomes a sync view for this project:
    - **Local changes** you can push (edits by you or an AI agent in Orca).
    - **Server changes** you can pull (plugin updates, edits made in WP Admin).
@@ -31,8 +31,22 @@ Nothing is installed on your server, and LocalDock stores no server details: it 
 | Opening the site, WP Admin and Mailpit in Orca's browser (via Orca's CLI; default browser as a fallback) | ✅ Working in Orca |
 | Status bar item | ✅ Working in Orca |
 | Servers over SSH, through your own SSH config (`ssh -G`, your keys and agent, `known_hosts`) | ✅ Working |
+| Resuming an interrupted pull; a dropped connection fails the step instead of hanging | ✅ Working |
 
-Orca doesn't share its own SSH hosts with plugins yet, which is why LocalDock reads your SSH config instead. See **[docs/ORCA-GAPS.md](docs/ORCA-GAPS.md)** for what LocalDock uses from Orca and what it's still missing.
+Orca doesn't share its own SSH hosts with plugins yet, which is why LocalDock reads your SSH config instead. See **[docs/ORCA-GAPS.md](docs/ORCA-GAPS.md)** for what LocalDock uses from Orca and what it's still missing, and the roadmap below for what changes once it can.
+
+## Roadmap: using Orca's SSH hosts
+
+Today LocalDock only sees servers in `~/.ssh/config`. Orca has its own SSH hosts (**Settings → SSH**), but plugins can't use them yet. If Orca opens them to plugins (listing the hosts, and running commands and transferring files over Orca's connection), LocalDock would switch to them:
+
+- [ ] **Servers set up in Orca show up in LocalDock.** Add a server once in Orca's settings and pull from it; no `~/.ssh/config` entry, and nothing to keep in sync between the two.
+- [ ] **Orca handles logging in.** Keys, passphrases and new host keys would go through Orca's own prompts, so there's no "connect once with `ssh` in a terminal" step, and passphrase-protected keys work without an agent. LocalDock would never read a key file itself.
+- [ ] **Jump hosts.** Servers behind a bastion (`ProxyJump`) would work wherever Orca's connection does.
+- [ ] **One connection, kept alive by Orca.** LocalDock would share Orca's connection to a server (the one its remote projects and terminals use) instead of logging in again, and Orca would reconnect after sleep or a network change.
+- [ ] **Sites tied to Orca's host id, not an alias name.** Renaming a `Host` alias wouldn't strand a pulled site.
+- [ ] **The same speed.** Parallel archive downloads and resumable pulls stay, as long as Orca's connection can run several commands at once.
+
+Only the host layer would change (`PluginOrcaHost.listSshHosts()`, `findSshHost()` and `openSession()` in `packages/orca-plugin/src/worker/orca/pluginHost.ts`). The SSH config would stay as a fallback for servers that aren't in Orca.
 
 ## Try the panel
 
@@ -63,7 +77,7 @@ The LocalDock tab appears in the right sidebar and follows the project you focus
 
 ## Clear a pulled site out of a project
 
-To start over after a cancelled, failed or finished pull:
+An unfinished pull can be cleared from the tab (**Start over**). To clear a finished pull, or from a terminal:
 
 ```sh
 npm run reset-project -- <project folder>         # shows what would be deleted
@@ -72,7 +86,7 @@ npm run reset-project -- <project folder> --yes   # deletes it
 
 It deletes the site's DDEV project (containers and database) and every file except `.git` and the other files a new project starts with. It refuses folders without a `.localdock` folder.
 
-## Requirements (once it works)
+## Requirements
 
 - [Orca](https://github.com/stablyai/orca) 1.4.248 or later, with plugins enabled
 - [DDEV](https://ddev.com/get-started/) (and the Docker provider it uses)

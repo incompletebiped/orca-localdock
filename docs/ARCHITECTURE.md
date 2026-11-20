@@ -26,7 +26,8 @@ This package has no Orca or VS Code dependencies.
 - `discovery/`: as root, lists cPanel accounts with `whmapi1 listaccts`, then each account's domains with `uapi DomainInfo domains_data`. Detects WordPress from `wp-includes/version.php`. Domains that share a docroot collapse into one site.
 - `sync/`: the sync baseline lives in `.localdock/state.json` and records each file's hash plus its remote and local stat at the last sync. `changeSet.ts` compares the baseline against the local and remote content and classifies each file as **push**, **pull**, **conflict** or **same**. Only files whose stat changed get hashed. Remote files are hashed with `sha1sum` over SSH.
   - Listing the server is one `find -printf` over SSH (NUL-separated path, size, mtime), not a walk of SFTP directories.
-  - Downloads (a whole pull, or pulling selected server changes) are one `tar -cz` stream of exactly the listed files, unpacked as it arrives (`remoteArchive.ts`). Each file is hashed while it's written, so the baseline costs no extra server round trips. Speed depends on the bytes moved, not the number of files. Uploads still go file by file over SFTP, since they're only the files you changed.
+  - Downloads (a whole pull, or pulling selected server changes) are `tar -cz` streams of exactly the listed files, unpacked as they arrive (`remoteArchive.ts`). Each file is hashed while it's written, so the baseline costs no extra server round trips. Speed depends on the bytes moved, not the number of files. Anything over 1 MB is split into four archives of about equal size, sent side by side on the one connection: over a distant link each SSH channel is held back by the round trip. Uploads still go file by file over SFTP, since they're only the files you changed.
+  - A pull saves the files it has finished to `.localdock/pull.json` every few seconds (`pullProgress.ts`). Resuming re-lists the server and keeps each recorded file whose server size and mtime and local size and mtime are unchanged; the rest, and the database, are downloaded again. The record goes once `state.json` is written.
 - `operations/fileSync.ts`: push and pull of selected files. It recomputes the change set first, so a file that changed on the server since the user last looked becomes a conflict instead of being overwritten.
 - `db/`:
   - `mysqldump` and `mysql` stream over SSH. Credentials go in a 0600 option file in the account's home directory, never on a command line.
@@ -37,7 +38,7 @@ This package has no Orca or VS Code dependencies.
   - Media (`wp-content/uploads`) isn't pulled, except for the CSS that themes and page builders generate there. Missing media is redirected to the live site.
   - On Windows, the project's drive is mounted inside Docker Desktop's WSL distro before each start, so projects on removable drives work.
   - Docker housekeeping: stopping the last site runs `ddev poweroff`, Docker Desktop can be started and quit from the panel, and "Free up space" removes only DDEV images tagged for another DDEV version.
-- `ssh/`: the `RemoteShell` and `RemoteFs` interfaces the engine runs on. `SshConnection` is the ssh2 implementation: one connection per host, trusting either the user's `known_hosts` keys or a pinned key. `sshConfig.ts` lists the aliases in `~/.ssh/config`, resolves one with `ssh -G`, looks its key up with `ssh-keygen -F`, and connects with the user's identity files, then the agent.
+- `ssh/`: the `RemoteShell` and `RemoteFs` interfaces the engine runs on. `SshConnection` is the ssh2 implementation: one connection per host, trusting either the user's `known_hosts` keys or a pinned key. When the connection drops, every command and SFTP call still waiting on it fails with `SSH_TIMEOUT` (ssh2 alone would leave SFTP calls waiting forever), and the controller reconnects for the next step. `sshConfig.ts` lists the aliases in `~/.ssh/config`, resolves one with `ssh -G`, looks its key up with `ssh-keygen -F`, and connects with the user's identity files, then the agent.
 
 ### `packages/orca-plugin`: the plugin
 
@@ -46,7 +47,7 @@ This package has no Orca or VS Code dependencies.
 - `src/worker/transport.ts`: pushes each state to the panel with `orca.panels.post`, at most every 100 ms (Orca allows 200 posts per 10 s). A state over 256 KiB goes out as a `state.stale` notice, and the panel fetches it.
 - `src/worker/status.ts`: the status bar text for a state.
 - `src/worker/controller.ts`: the state machine:
-  `no-project | project-not-empty | set-up → no-hosts | choose-host → scanning → site-list → pulling → tracking`. An empty project stays at `set-up` until the user opts in.
+  `no-project | project-not-empty | set-up → no-hosts | choose-host → scanning → site-list → pulling → tracking`. An empty project stays at `set-up` until the user opts in. A pull that stops part-way leads to `pull-interrupted`, which offers Resume (from the host, account and docroot recorded in plugin storage when the pull started, never from the project folder) or Start over.
   In `tracking`, the panel looks like Source Control and has DDEV controls. Panel actions are validated with zod (`shared/actionSchema.ts`). A pull only accepts sites the worker discovered itself.
 - `src/worker/orca/`: `OrcaHost` is the interface to everything Orca provides. `PluginOrcaHost` implements it with Orca's host API 1, and SSH with the user's SSH config (Orca doesn't share its SSH hosts with plugins).
 - `src/panel/`: the UI. `render.ts` is a pure function from state to HTML, and every string from the server is escaped. Confirmations happen inline, because the sandbox blocks `confirm()`. `bridge.ts` is the panel's side of the messaging (`window.orca.plugin`). Link buttons and the local URL ask the worker (`open` request) to open a tab in Orca's browser through Orca's CLI; if that fails, the panel opens the default browser with `orca.shell.openExternal`, which Orca only allows from a click in the frame. Colors come from Orca's `--orca-*` frame variables.
@@ -70,6 +71,7 @@ The engine, the controller and the UI stay the same.
 |---|---|---|
 | `.localdock/state.json` | Sync baseline | No |
 | `.localdock/server.json` | The server's changes since the baseline, from the last check | No |
+| `.localdock/pull.json` | Files an unfinished pull has finished (gone once the pull completes) | No |
 | `.localdock/db.sql` | Last database dump (**contains personal data**) | No |
 | `.ddev/` | DDEV project config | No |
 | `wp-config.php` | Local config: table prefix, local salts, loads `wp-config-ddev.php` | No (production keeps its own) |
