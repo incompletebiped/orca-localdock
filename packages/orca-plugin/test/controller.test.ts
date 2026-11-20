@@ -398,6 +398,11 @@ describe('LocalDockController', () => {
     expect(s).toMatchObject({ view: 'tracking', site: { domain: 'example.com', hostLabel: 'Example server' }, ddev: { status: 'not-installed' }, changes: null });
     expect(linkUrl(s, 'live')).toBe('https://example.com');
     expect(linkUrl(s, 'admin')).toBeNull();
+    const tracked = s as Extract<PanelState, { view: 'tracking' }>;
+    for (const bad of ['file:///C:/Windows/System32/calc.exe', 'ms-msdt:/id', 'javascript:alert(1)', 'https://example.com/ x']) {
+      expect(linkUrl({ ...tracked, site: { ...tracked.site, productionUrl: bad } }, 'live'), bad).toBeNull();
+    }
+    expect(linkUrl({ ...tracked, ddev: { status: 'running', url: 'file:///etc' } }, 'site')).toBeNull();
     expect(statusItem(s)).toMatchObject({ text: 'example.com', tone: 'neutral' });
     expect(await ctl.openLink('live')).toEqual({ opened: true, url: 'https://example.com' });
     expect(host.browserOpens).toEqual([['https://example.com', dir]]);

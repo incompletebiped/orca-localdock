@@ -140,10 +140,13 @@ export interface OpenLink {
 export function linkUrl(view: PanelView, target: LinkTarget): string | null {
   if (view.view !== 'tracking') return null;
   const { ddev, site } = view;
-  if (target === 'live') return site.productionUrl;
-  if (target === 'mailpit') return ddev.mailpitUrl ?? null;
-  if (!ddev.url) return null;
-  return target === 'admin' ? `${ddev.url.replace(/\/$/, '')}/wp-admin/` : ddev.url;
+  const url =
+    target === 'live' ? site.productionUrl
+    : target === 'mailpit' ? ddev.mailpitUrl
+    : ddev.url && (target === 'admin' ? `${ddev.url.replace(/\/$/, '')}/wp-admin/` : ddev.url);
+  // These come from the site's state file and DDEV's output, and end up in "open in the browser":
+  // only plain web URLs, never file:, ms-msdt: or other schemes the OS would hand to a program.
+  return url && /^https?:\/\/[^\s]+$/i.test(url) ? url : null;
 }
 
 /** `plugin.request` names the worker answers with `orca.panels.handle`. */

@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { LocalDockError } from '../errors.js';
 import { processRunner, type CommandRunner } from '../ddev/runner.js';
 import type { Logger } from '../log.js';
-import { SshConnection } from './SshConnection.js';
+import { SshConnection, fingerprintHostKey } from './SshConnection.js';
 
 /**
  * SSH hosts as the user's own `ssh` sees them: the aliases in ~/.ssh/config,
@@ -146,13 +146,35 @@ export async function resolveSshHost(alias: string, runner: CommandRunner = proc
 
 /** SHA256 fingerprints of the keys known_hosts lists for a host (none: the user never connected to it). */
 export async function knownHostKeys(host: SshConfigHost, runner: CommandRunner = processRunner): Promise<string[]> {
-  const found = new Set<string>();
+  const trusted = new Set<string>();
+  const revoked = new Set<string>();
   for (const file of host.knownHostsFiles) {
     if (!existsSync(file)) continue;
-    const r = await runner.run(sshTool('ssh-keygen'), ['-l', '-F', host.knownHostsName, '-f', file], { env: sshEnv() });
-    for (const m of r.stdout.matchAll(/SHA256:[A-Za-z0-9+/]+/g)) found.add(m[0]);
+    // Without -l, ssh-keygen prints the matching known_hosts lines as written, markers included.
+    const r = await runner.run(sshTool('ssh-keygen'), ['-F', host.knownHostsName, '-f', file], { env: sshEnv() });
+    for (const entry of parseKnownHostsLines(r.stdout)) (entry.revoked ? revoked : trusted).add(entry.fingerprint);
   }
-  return [...found];
+  return [...trusted].filter((fp) => !revoked.has(fp));
+}
+
+/**
+ * known_hosts lines (`[@marker] hosts keytype base64 [comment]`) as SHA256
+ * fingerprints. `@revoked` keys are reported as such; `@cert-authority` lines
+ * are CA keys, not host keys, and are skipped.
+ */
+export function parseKnownHostsLines(text: string): Array<{ fingerprint: string; revoked: boolean }> {
+  const out: Array<{ fingerprint: string; revoked: boolean }> = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const fields = line.split(/\s+/);
+    const marker = fields[0]!.startsWith('@') ? fields.shift()!.toLowerCase() : null;
+    if (marker === '@cert-authority') continue;
+    const b64 = fields[2];
+    if (!b64 || !/^[A-Za-z0-9+/]+=*$/.test(b64)) continue;
+    out.push({ fingerprint: fingerprintHostKey(Buffer.from(b64, 'base64')), revoked: marker === '@revoked' });
+  }
+  return out;
 }
 
 /**

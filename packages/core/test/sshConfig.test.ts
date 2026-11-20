@@ -52,20 +52,27 @@ describe('reading the ssh config', () => {
     expect(sshEnv({ PATH: 'x' }, 'linux')).toEqual({ PATH: 'x' });
   });
 
-  it('collects known_hosts fingerprints with ssh-keygen', async () => {
+  it('collects known_hosts keys with ssh-keygen, leaving out revoked keys and CA lines', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-kh-'));
     const file = path.join(dir, 'known_hosts');
     await fs.writeFile(file, 'placeholder');
+    const pub = () => (utils.parseKey(utils.generateKeyPairSync('ed25519').public).getPublicSSH() as Buffer);
+    const [good, bad, ca] = [pub(), pub(), pub()];
+    const line = (k: Buffer, marker = '') => `${marker ? marker + ' ' : ''}server.example.com ssh-ed25519 ${k.toString('base64')}`;
     const calls: string[][] = [];
     const runner: CommandRunner = {
       run: async (_cmd, args) => {
         calls.push([...args]);
-        return { code: 0, stderr: '', stdout: '# Host server.example.com found: line 3\n256 SHA256:abcDEF+/123 server.example.com (ED25519)\n' };
+        return {
+          code: 0,
+          stderr: '',
+          stdout: ['# Host server.example.com found: line 3', line(good), line(bad), line(bad, '@revoked'), line(ca, '@cert-authority'), 'garbage line'].join('\n'),
+        };
       },
     };
     const h = parseSshG('x', 'hostname server.example.com\nport 22', () => false);
-    expect(await knownHostKeys({ ...h, knownHostsFiles: [file, path.join(dir, 'missing')] }, runner)).toEqual(['SHA256:abcDEF+/123']);
-    expect(calls).toEqual([['-l', '-F', 'server.example.com', '-f', file]]);
+    expect(await knownHostKeys({ ...h, knownHostsFiles: [file, path.join(dir, 'missing')] }, runner)).toEqual([fingerprintHostKey(good)]);
+    expect(calls).toEqual([['-F', 'server.example.com', '-f', file]]);
     await fs.rm(dir, { recursive: true, force: true });
   });
 });
