@@ -263,7 +263,13 @@ export class Ddev {
     if (this.platform === 'win32' && !(await this.shareProjectDrive(projectDir))) {
       this.log.warn(`Couldn't make ${path.win32.parse(projectDir).root} visible to Docker; folders DDEV mounts from it may look empty`);
     }
-    await this.must(projectDir, ['start', '-y'], 'ddev start', { signal, onLine });
+    try {
+      await this.must(projectDir, ['start', '-y'], 'ddev start', { signal, onLine });
+    } catch (err) {
+      // Stopping the ddev process makes it fail; report that as the cancel it was.
+      if (signal?.aborted) throw new LocalDockError('DDEV start cancelled', 'CANCELLED');
+      throw err;
+    }
   }
 
   /**

@@ -631,9 +631,18 @@ export class LocalDockController {
       await this.startDocker();
     }
     this.dockerIdle = false;
-    await this.tracked(which === 'start' ? 'Starting DDEV' : 'Stopping DDEV', false, async (ctx, dir) => {
-      if (which === 'start') await startSite(ctx, dir);
-      else {
+    // A start can be cancelled (a first start can take minutes); a stop runs to the end.
+    await this.tracked(which === 'start' ? 'Starting DDEV' : 'Stopping DDEV', which === 'start', async (ctx, dir) => {
+      if (which === 'start') {
+        try {
+          await startSite(ctx, dir);
+        } catch (err) {
+          if (!isCancelled(err)) throw err;
+          this.notice = { kind: 'info', text: 'Start cancelled. Part of the site may still be running in Docker; Stop shuts it down.' };
+          await this.refreshTracking();
+          return;
+        }
+      } else {
         await stopSite(ctx, dir);
         await this.cleanUpAfterLastSite(ctx);
       }

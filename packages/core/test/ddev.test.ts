@@ -132,6 +132,22 @@ describe('progress while DDEV starts', () => {
     expect(lines).toEqual(['Waiting for containers to become ready']);
   });
 
+  it('reports a start stopped by Cancel as cancelled, not as a failure', async () => {
+    const abort = new AbortController();
+    const runner: CommandRunner = {
+      async run(_command, args, options) {
+        if (args[0] === 'start') {
+          abort.abort();
+          return { code: 1, stdout: '', stderr: options?.signal?.aborted ? 'The operation was aborted' : '' };
+        }
+        return { code: 0, stdout: '', stderr: '' };
+      },
+    };
+    await expect(new Ddev(runner, { binary: 'ddev', platform: 'linux' }).start('/sites/example', abort.signal)).rejects.toMatchObject({ code: 'CANCELLED' });
+    const failing: CommandRunner = { run: async () => ({ code: 1, stdout: '', stderr: 'port 443 is busy' }) };
+    await expect(new Ddev(failing, { binary: 'ddev', platform: 'linux' }).start('/sites/example', new AbortController().signal)).rejects.toThrow(/port 443 is busy/);
+  });
+
   it('reports each output line of a real process, without color codes', async () => {
     const lines: string[] = [];
     const script = `process.stdout.write('\\x1b[32mStarting\\x1b[0m web\\npart'); setTimeout(() => { process.stdout.write('ial\\n'); process.stderr.write('warn\\r\\n\\n'); }, 20)`;
