@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { Ddev, sha1File, writeSiteState, type CommandRunner, type ExecResult, type RemoteFs, type RemoteShell } from '@localdock/core';
+import { Ddev, LocalDockError, sha1File, writeSiteState, type CommandRunner, type ExecResult, type RemoteFs, type RemoteShell } from '@localdock/core';
 import { LocalDockController } from '../src/worker/controller.js';
 import { OrcaApiPendingError } from '../src/shared/gaps.js';
 import type { OrcaHost, ProjectInfo, RemoteSession, SshHostInfo } from '../src/worker/orca/host.js';
@@ -364,6 +364,27 @@ describe('LocalDockController', () => {
     expect(hasUndefined(s)).toBe(true);
     expect(hasUndefined(toJson(s))).toBe(false);
     expect(toJson(s)).toMatchObject({ view: 'tracking', site: { domain: 'example.com' } });
+  });
+
+  it('runs a click on the site the panel shows, even if focus moved before it ran, and shows it before connecting', async () => {
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), 'ld-other-'));
+    host.project = { path: dir, name: 'p' };
+    host.hosts = [{ id: 'h1', label: 'x', host: 'server.example.com', port: 22, username: 'root', connected: true }];
+    await writeSiteState(dir, {
+      version: 1, hostId: 'h1', account: 'exampleco', domain: 'example.com', docroot: '/home/exampleco/public_html',
+      productionUrl: 'https://example.com', tablePrefix: 'wp_', pulledAt: new Date().toISOString(), files: {},
+    });
+    await ctl.dispatch({ type: 'refresh' });
+    host.project = { path: other, name: 'other' }; // focus moved; no refresh yet
+    let connectingShown = false;
+    host.openSession = async () => {
+      connectingShown = ctl.state().job?.message === 'Connecting to the server…';
+      throw new LocalDockError('no server in this test', 'UNKNOWN', false);
+    };
+    const s = await ctl.dispatch({ type: 'scan-changes' });
+    expect(connectingShown).toBe(true);
+    expect(s.notice?.text).toBe('no server in this test');
+    expect(s.notice?.text).not.toMatch(/no pulled site/);
   });
 
   it('switches to the source-control view for a project that holds a pulled site', async () => {

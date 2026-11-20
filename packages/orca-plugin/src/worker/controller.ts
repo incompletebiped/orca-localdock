@@ -351,11 +351,12 @@ export class LocalDockController {
 
   /** A job's context. With no host it never connects: for local-only work (DDEV, Docker). */
   private async context(hostId: string | null, dir: string, title: string, cancellable: boolean): Promise<OperationContext> {
-    const { session, asRoot } = hostId ? await this.session(hostId) : { session: NOT_CONNECTED, asRoot: false };
     this.abort = new AbortController();
     this.jobHome = { dir, view: this.view };
-    this.job = { title, message: 'Starting…', cancellable };
+    // Show the job before connecting: a first SSH connection takes a few seconds, and the click should show at once.
+    this.job = { title, message: hostId && !this.sessions.has(hostId) ? 'Connecting to the server…' : 'Starting…', cancellable };
     this.emit();
+    const { session, asRoot } = hostId ? await this.session(hostId) : { session: NOT_CONNECTED, asRoot: false };
     return {
       shell: session.shell,
       sftp: session.sftp,
@@ -524,11 +525,12 @@ export class LocalDockController {
     fn: (ctx: OperationContext, dir: string, state: SiteState) => Promise<void>,
     opts: { local?: boolean } = {},
   ): Promise<void> {
-    const project = await this.requireProject();
-    const state = await readSiteState(project.path);
-    if (!state) throw new LocalDockError('This project has no pulled site.', 'NOT_FOUND', false);
-    const ctx = await this.context(opts.local ? null : state.hostId, project.path, title, cancellable);
-    await fn(ctx, project.path, state);
+    // Act on the site the panel shows, even if Orca's focus moved on before this ran (a click races a project switch).
+    const dir = this.view.view === 'tracking' && this.trackingDir ? this.trackingDir : (await this.requireProject()).path;
+    const state = await readSiteState(dir);
+    if (!state) throw new LocalDockError(`${path.basename(dir)} has no pulled site.`, 'NOT_FOUND', false);
+    const ctx = await this.context(opts.local ? null : state.hostId, dir, title, cancellable);
+    await fn(ctx, dir, state);
   }
 
   private async scanChanges(): Promise<void> {
