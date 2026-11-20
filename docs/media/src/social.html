@@ -1,0 +1,48 @@
+<!doctype html>
+<!-- GitHub social preview, 1280×640. Render at that viewport and screenshot (see docs/media/README.md). -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1280px; height: 640px; overflow: hidden; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    color: #e8ecf3;
+    background:
+      radial-gradient(900px 500px at 85% 20%, rgba(76, 141, 255, .28), transparent 60%),
+      radial-gradient(700px 400px at 0% 100%, rgba(63, 185, 80, .12), transparent 60%),
+      #0d1017;
+    display: flex; align-items: center; gap: 56px; padding: 0 72px;
+  }
+  .text { flex: 1; }
+  .brand { display: flex; align-items: center; gap: 22px; }
+  .brand img { width: 104px; height: 104px; border-radius: 24px; box-shadow: 0 12px 40px rgba(37, 87, 214, .45); }
+  h1 { font-size: 76px; font-weight: 700; letter-spacing: -1.5px; line-height: 1; }
+  .for { font-size: 30px; font-weight: 500; color: #8ea0bd; margin-top: 8px; }
+  .tag { font-size: 30px; line-height: 1.35; margin-top: 40px; color: #d5dbe6; max-width: 640px; }
+  .tag b { color: #fff; }
+  .chips { display: flex; gap: 12px; margin-top: 36px; flex-wrap: wrap; }
+  .chip { font-size: 18px; padding: 7px 14px; border-radius: 999px; background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .14); color: #c9d2e0; }
+  .shot {
+    width: 400px; height: 560px; border-radius: 14px; overflow: hidden; flex: none;
+    border: 1px solid rgba(255, 255, 255, .12);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, .55), 0 0 0 6px rgba(255, 255, 255, .03);
+    -webkit-mask-image: linear-gradient(#000 78%, transparent);
+            mask-image: linear-gradient(#000 78%, transparent);
+  }
+  .shot img { width: 400px; display: block; }
+</style>
+</head>
+<body>
+  <div class="text">
+    <div class="brand">
+      <img src="icon.svg" alt="">
+      <div><h1>LocalDock</h1><div class="for">for Orca</div></div>
+    </div>
+    <p class="tag">Pull <b>WordPress sites from cPanel</b>, run them locally with <b>DDEV</b>, and sync changes back like <b>Source Control</b>.</p>
+    <div class="chips"><span class="chip">cPanel over SSH</span><span class="chip">DDEV</span><span class="chip">Push · Pull · Conflicts</span><span class="chip">Database backups</span></div>
+  </div>
+  <div class="shot"><img src="../panel-source-control.png" alt=""></div>
+</body>
+</html>

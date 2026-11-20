@@ -1,0 +1,57 @@
+<!doctype html>
+<!-- Plugin page cover (manifest `cover`) and README hero, 1600×1000. Render at that viewport and screenshot (see docs/media/README.md). -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1600px; height: 1000px; overflow: hidden; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    color: #e8ecf3;
+    background:
+      radial-gradient(1100px 700px at 88% 15%, rgba(76, 141, 255, .30), transparent 60%),
+      radial-gradient(900px 600px at 0% 100%, rgba(63, 185, 80, .12), transparent 60%),
+      #0d1017;
+    position: relative;
+  }
+  .text { position: absolute; left: 96px; top: 50%; transform: translateY(-50%); width: 700px; }
+  .brand { display: flex; align-items: center; gap: 26px; }
+  .brand img { width: 128px; height: 128px; border-radius: 28px; box-shadow: 0 14px 48px rgba(37, 87, 214, .45); }
+  h1 { font-size: 96px; font-weight: 700; letter-spacing: -2px; line-height: 1; }
+  .for { font-size: 36px; font-weight: 500; color: #8ea0bd; margin-top: 10px; }
+  .tag { font-size: 35px; line-height: 1.35; margin-top: 48px; color: #d5dbe6; }
+  .tag b { color: #fff; }
+  ol { list-style: none; padding: 0; margin-top: 44px; display: grid; gap: 16px; counter-reset: step; }
+  li { font-size: 26px; color: #c9d2e0; display: flex; align-items: center; gap: 16px; counter-increment: step; }
+  li::before {
+    content: counter(step); flex: none; width: 40px; height: 40px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 20px; font-weight: 700; color: #fff; background: #4c8dff;
+  }
+  .panel {
+    position: absolute; width: 420px; border-radius: 16px; overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, .12);
+    box-shadow: 0 34px 90px rgba(0, 0, 0, .6);
+  }
+  .panel img { width: 420px; display: block; }
+  .back { right: 80px; top: 200px; height: 720px; filter: brightness(.5); transform: rotate(4deg); }
+  .front { right: 300px; top: 80px; height: 840px; }
+</style>
+</head>
+<body>
+  <div class="text">
+    <div class="brand">
+      <img src="icon.svg" alt="">
+      <div><h1>LocalDock</h1><div class="for">for Orca</div></div>
+    </div>
+    <p class="tag">Pull <b>WordPress sites from cPanel</b>, run them locally with <b>DDEV</b>, and sync changes back like <b>Source Control</b>.</p>
+    <ol>
+      <li>Pick a site on your cPanel server</li>
+      <li>Pull it and run it with DDEV</li>
+      <li>Push and pull changes, with backups</li>
+    </ol>
+  </div>
+  <div class="panel back"><img src="../panel-database.png" alt=""></div>
+  <div class="panel front"><img src="../panel-source-control.png" alt=""></div>
+</body>
+</html>

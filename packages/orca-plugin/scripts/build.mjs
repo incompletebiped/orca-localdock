@@ -80,6 +80,11 @@ await writeFile(
   page({ title: 'LocalDock', css, js: await bundleBrowser('src/panel/main.ts'), body: '<div id="app"></div>' }),
 );
 await copyFile(join(root, 'orca-plugin.json'), join(dist, 'orca-plugin.json'));
+// The icon, cover and screenshots the manifest names, from docs/media (made by docs/media/src).
+const manifest = JSON.parse(await readFile(join(root, 'orca-plugin.json'), 'utf-8'));
+const images = [manifest.icon, manifest.cover?.path, ...(manifest.screenshots ?? []).map((s) => s.path)].filter(Boolean);
+await mkdir(join(dist, 'media'), { recursive: true });
+for (const image of images) await copyFile(join(root, '..', '..', 'docs', image), join(dist, image));
 console.log('Built plugin → packages/orca-plugin/dist');
 
 if (preview) {
@@ -89,7 +94,11 @@ if (preview) {
 .preview-bar { display:flex; gap:8px; align-items:center; padding:8px 12px; font:12px system-ui; background:#111; color:#ccc; border-bottom:1px solid #333; }
 .preview-wrap { display:flex; gap:16px; padding:16px; background:#0b0b0b; min-height:calc(100vh - 40px); }
 #app { width:340px; border:1px solid #333; border-radius:8px; overflow:auto; max-height:calc(100vh - 72px); background:var(--ld-bg); }
-#log { flex:1; margin:0; font:11px ui-monospace,monospace; color:#8b8; white-space:pre-wrap; }`;
+#log { flex:1; margin:0; font:11px ui-monospace,monospace; color:#8b8; white-space:pre-wrap; }
+.bare .preview-bar, .bare #log { display:none; }
+html:has(body.bare) { scrollbar-width:none; }
+.bare .preview-wrap { padding:0; min-height:0; background:var(--ld-bg); }
+.bare #app { width:360px; border:0; border-radius:0; max-height:none; overflow:visible; }`;
   await writeFile(
     join(dir, 'index.html'),
     page({

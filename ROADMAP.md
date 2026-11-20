@@ -28,9 +28,11 @@
 
 - [ ] The plugin at the repo root: `orca-plugin.json` there, with the built worker and panel committed (installs run no build), and CI that checks the committed build matches the source and runs `orca plugin validate`
 - [ ] Release script: version in the manifest matches the `vX.Y.Z` tag, `orca-plugin` topic, push the tag, check `onorca.dev/plugins/incompletebiped/orca-localdock`
-- [ ] A hero image: GitHub social preview (1280×640, set in the repo settings), the manifest `cover` (16:10) and the top of the README
-- [ ] README with a screenshot of the sidebar (site view with changes, the database section, the status bar), install steps, and an "Access it asks for" section. Screenshots use a made-up site (example.com), never a client's
-- [ ] A 128×128 icon
+- [x] A hero image: the manifest `cover` (16:10) and the top of the README, plus a GitHub social preview image (`docs/media/social-preview.png`)
+- [ ] Set the social preview in the repo settings (Settings → General → Social preview; GitHub has no API for it)
+- [x] Screenshots of the sidebar in the README and the manifest, from made-up sample data (example.com)
+- [ ] README install steps and an "Access it asks for" section, and a status bar screenshot
+- [x] An icon (256×256)
 
 ## Features
 

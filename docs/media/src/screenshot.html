@@ -1,0 +1,51 @@
+<!doctype html>
+<!--
+  Plugin page screenshots (manifest `screenshots`), 1600×1000. Pick the content with the URL hash:
+  #title=…&text=…&panels=panel-a.png,panel-b.png  (see docs/media/README.md)
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1600px; height: 1000px; overflow: hidden; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    color: #e8ecf3;
+    background:
+      radial-gradient(1000px 700px at 90% 10%, rgba(76, 141, 255, .24), transparent 60%),
+      #0d1017;
+    display: flex; align-items: center; gap: 64px; padding: 0 96px;
+  }
+  .text { flex: 1; }
+  .brand { display: flex; align-items: center; gap: 14px; font-size: 26px; font-weight: 600; color: #8ea0bd; }
+  .brand img { width: 44px; height: 44px; border-radius: 10px; }
+  h2 { font-size: 64px; line-height: 1.1; letter-spacing: -1px; margin-top: 36px; }
+  p { font-size: 30px; line-height: 1.45; color: #c9d2e0; margin-top: 28px; }
+  .panels { display: flex; gap: 32px; align-items: flex-start; flex: none; }
+  .panel { width: 420px; border-radius: 16px; overflow: hidden; border: 1px solid rgba(255, 255, 255, .12); box-shadow: 0 34px 90px rgba(0, 0, 0, .6); }
+  .panel img { width: 420px; display: block; }
+</style>
+</head>
+<body>
+  <div class="text">
+    <div class="brand"><img src="icon.svg" alt="">LocalDock for Orca</div>
+    <h2 id="title"></h2>
+    <p id="text"></p>
+  </div>
+  <div class="panels" id="panels"></div>
+  <script>
+    const q = new URLSearchParams(location.hash.slice(1));
+    document.getElementById('title').textContent = q.get('title') ?? '';
+    document.getElementById('text').textContent = q.get('text') ?? '';
+    for (const name of (q.get('panels') ?? '').split(',').filter(Boolean)) {
+      const div = document.createElement('div');
+      div.className = 'panel';
+      const img = document.createElement('img');
+      img.src = `../${name}`;
+      div.append(img);
+      document.getElementById('panels').append(div);
+    }
+  </script>
+</body>
+</html>

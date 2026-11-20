@@ -1,5 +1,7 @@
 # LocalDock for Orca
 
+![LocalDock for Orca: pull WordPress sites from cPanel, run them locally with DDEV, and sync changes back like Source Control](docs/media/cover.png)
+
 > **🚧 Early version.** Everything works end to end, but it has been used on a small number of sites so far. Review what a push will change before you push to a live site.
 
 **Local WP, but for cPanel, inside [Orca](https://github.com/stablyai/orca).** LocalDock is an Orca plugin that adds a **LocalDock** tab to the right sidebar, next to Source Control:
@@ -18,6 +20,23 @@
 A status bar item shows the site and its pending changes (↑ to push, ↓ to pull); click it to check the server.
 
 Nothing is installed on your server, and LocalDock stores no server details: it reads your SSH config each time and trusts only the host keys in your `known_hosts`.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/media/panel-source-control.png" alt="The sync view: local changes, server changes and files changed on both sides, grouped by theme and plugin"></td>
+    <td width="33%"><img src="docs/media/panel-site-list.png" alt="WordPress sites found on a cPanel server, each with a Pull button"><br><br><img src="docs/media/panel-pull-interrupted.png" alt="A pull that stopped part-way, with Resume pull and Start over"></td>
+    <td width="33%"><img src="docs/media/panel-database.png" alt="The database section: pick table groups to push, with a backup taken first and a rollback button"></td>
+  </tr>
+  <tr>
+    <td><b>Sync like Source Control.</b> Push or pull a file, a group or everything; files changed on both sides are flagged.</td>
+    <td><b>Pick a site and pull it.</b> If the connection drops, resume where it stopped.</td>
+    <td><b>Push the database</b> by table group, with a server-side backup and one-click rollback.</td>
+  </tr>
+</table>
+
+Screenshots use made-up sample data (example.com). See [docs/media](docs/media/README.md) for how they're made.
 
 ## Status
 

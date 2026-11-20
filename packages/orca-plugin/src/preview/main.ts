@@ -10,6 +10,8 @@ import { FIXTURES } from './fixtures.js';
 const names = Object.keys(FIXTURES);
 const params = new URLSearchParams(location.hash.slice(1));
 let current: PanelState = FIXTURES[params.get('state') ?? names[0]!] ?? FIXTURES[names[0]!]!;
+// `#bare=1`: just the panel, filling the page, for screenshots (docs/media).
+if (params.has('bare')) document.body.classList.add('bare');
 
 const select = document.getElementById('state') as HTMLSelectElement;
 select.innerHTML = names.map((n) => `<option${FIXTURES[n] === current ? ' selected' : ''}>${n}</option>`).join('');
