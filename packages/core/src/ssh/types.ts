@@ -3,7 +3,9 @@ import type { Readable, Writable } from 'node:stream';
 export type SshAuth =
   | { kind: 'agent' }
   | { kind: 'key'; keyPath: string; passphrase?: string }
-  | { kind: 'password'; password: string };
+  | { kind: 'password'; password: string }
+  /** What `ssh` does by default: each identity file in turn (passphrase-protected ones are skipped), then the agent. */
+  | { kind: 'keys-then-agent'; keyPaths: string[] };
 
 export interface SshTarget {
   host: string;
@@ -12,6 +14,13 @@ export interface SshTarget {
   auth: SshAuth;
   /** Pinned host key fingerprint (`SHA256:…`, as printed by `ssh-keygen -lf`). */
   hostKeyFingerprint?: string;
+  /**
+   * Fingerprints the user's known_hosts lists for this host. When set, these
+   * (and only these) are trusted, as `ssh` would, instead of pinning.
+   */
+  knownHostKeys?: string[];
+  /** How to tell the user to trust the host themselves, e.g. `ssh example` (used in error messages). */
+  trustCommand?: string;
 }
 
 export interface ExecResult {

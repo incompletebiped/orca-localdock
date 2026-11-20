@@ -1,12 +1,11 @@
 # LocalDock for Orca
 
-> **🚧 Work in progress: this plugin can't reach a server yet.**
-> The panel, the worker and the project handling run on Orca's plugin API today. Connecting to a server needs SSH access that Orca plugins don't have yet (listed below), so LocalDock stops at "Waiting on Orca" when you set up a project.
+> **🚧 Early version.** Everything works end to end, but it has been used on a small number of sites so far. Review what a push will change before you push to a live site.
 
 **Local WP, but for cPanel, inside [Orca](https://github.com/stablyai/orca).** LocalDock is an Orca plugin that adds a **LocalDock** tab to the right sidebar, next to Source Control:
 
 1. **Create a new, empty project** in Orca, open the LocalDock tab, and click **Use LocalDock in this project**. LocalDock leaves projects you don’t set up alone.
-2. **Connect to a server.** LocalDock uses the SSH hosts you've already added in Orca (Settings → SSH). Add one that points at a cPanel server: log in as `root` to see every account on a WHM server, or as a cPanel account user to see that account's sites. If no host is connected, the tab tells you what to do.
+2. **Connect to a server.** LocalDock uses the hosts in your SSH config (`~/.ssh/config`), with the same keys, agent and `known_hosts` as `ssh` in a terminal. Add a `Host` that points at a cPanel server and connect to it once with `ssh <alias>`, so its key is trusted: log in as `root` to see every account on a WHM server, or as a cPanel account user to see that account's sites.
 3. **Pick a WordPress site.** LocalDock scans the server (via cPanel's own `whmapi1`/`uapi`) and lists every WordPress install it finds.
 4. **Pull it.** The site's files and database come down into the project, and **[DDEV](https://ddev.com)** runs it locally, with the same PHP and database versions as the server. Media (`wp-content/uploads`) stays on the server: the local site loads missing images from the live one.
 5. **Work like Source Control.** Once a site is pulled, the tab stops listing server sites and becomes a sync view for this project:
@@ -18,7 +17,7 @@
 
 A status bar item shows the site and its pending changes (↑ to push, ↓ to pull); click it to check the server.
 
-Nothing is installed on your server, and no server details are stored by LocalDock: connections are Orca's.
+Nothing is installed on your server, and LocalDock stores no server details: it reads your SSH config each time and trusts only the host keys in your `known_hosts`.
 
 ## Status
 
@@ -31,9 +30,9 @@ Nothing is installed on your server, and no server details are stored by LocalDo
 | The open project's folder (`workspace.readContext` + `workspace.list`) | ✅ Working in Orca |
 | Opening the site, WP Admin and Mailpit in Orca's browser (via Orca's CLI; default browser as a fallback) | ✅ Working in Orca |
 | Status bar item | ✅ Working in Orca |
-| **Orca SSH hosts: list, connect, run commands, transfer files** | ⏳ Waiting on Orca |
+| Servers over SSH, through your own SSH config (`ssh -G`, your keys and agent, `known_hosts`) | ✅ Working |
 
-Each ⏳ item is a single, clearly marked method in the code that throws "waiting on Orca" today. See **[docs/ORCA-GAPS.md](docs/ORCA-GAPS.md)** for exactly what's needed.
+Orca doesn't share its own SSH hosts with plugins yet, which is why LocalDock reads your SSH config instead. See **[docs/ORCA-GAPS.md](docs/ORCA-GAPS.md)** for what LocalDock uses from Orca and what it's still missing.
 
 ## Try the panel
 
@@ -60,7 +59,7 @@ orca plugin logs local.localdock                   # what the worker printed
 orca plugin dev request packages/orca-plugin/dist state   # call the worker as the panel does
 ```
 
-The LocalDock tab appears in the right sidebar and follows the project you focus. In an empty project, **Use LocalDock in this project** shows **"Waiting on Orca"** for the SSH capability. That's expected until the gap is filled.
+The LocalDock tab appears in the right sidebar and follows the project you focus. Create a new, empty project, focus it, and click **Use LocalDock in this project**.
 
 ## Clear a pulled site out of a project
 
@@ -77,7 +76,8 @@ It deletes the site's DDEV project (containers and database) and every file exce
 
 - [Orca](https://github.com/stablyai/orca) 1.4.248 or later, with plugins enabled
 - [DDEV](https://ddev.com/get-started/) (and the Docker provider it uses)
-- An Orca SSH host pointing at a cPanel server (root or a cPanel account user)
+- OpenSSH (`ssh` and `ssh-keygen`; built into Windows 10+, macOS and Linux)
+- A `Host` in your SSH config pointing at a cPanel server (root or a cPanel account user), connected to once with `ssh` so its key is in `known_hosts`. Jump hosts (`ProxyJump`) aren't supported yet.
 
 ## Repository layout
 

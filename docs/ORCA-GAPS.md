@@ -1,6 +1,6 @@
 # What LocalDock needs from Orca
 
-LocalDock uses Orca's plugin host API 1 (manifest format 2, Orca 1.4.248 or later). Everything except the server connection works through supported APIs. The capabilities it still needs are below. Each one is a single method that throws `OrcaApiPendingError` today. When Orca ships the capability, that method gets implemented and the gap is removed from this list.
+LocalDock uses Orca's plugin host API 1 (manifest format 2, Orca 1.4.248 or later) for everything Orca offers plugins. Where Orca has no plugin API yet (its SSH hosts, its browser), LocalDock uses the same thing a terminal would, as described below.
 
 ## What LocalDock uses today
 
@@ -10,22 +10,18 @@ LocalDock uses Orca's plugin host API 1 (manifest format 2, Orca 1.4.248 or late
 | The open project's folder | `workspace.readContext` gives the focused `workspaceId`, and `workspace.list` gives its `path` and `hostId`. Projects on an SSH host or another Orca are left alone, since DDEV runs sites on this computer. The `workspace.changed` event refreshes the panel when you switch projects. |
 | Opening the site, WP Admin, Mailpit, the live site | There's no plugin API for Orca's browser, so the worker runs Orca's own CLI launcher (`orca tab create --url … --worktree path:<project>`, spawned without a shell, found next to the Orca executable). The URL comes from the worker's state; the panel only names the button. If the CLI fails, the panel falls back to `orca.shell.openExternal` (default browser; Orca asks once per new web host). |
 | Status | A status bar item (`statusBar.update`) shows the tracked site, its pending changes, or the running job. Clicking it checks the server for changes. Declaring a status bar item also keeps the worker running while the plugin is enabled, so the file watcher and in-memory state survive. |
+| Servers | The user's SSH config, not Orca's SSH hosts (see below). |
 | Storage, notifications | `storage.get`/`storage.set` (`storage:own`), `notifications.show`. |
 
-## Gaps
+## What Orca doesn't offer yet, and what LocalDock does instead
 
-### 1. `ssh-hosts`: Orca's SSH hosts (**blocking**)
+### Orca's SSH hosts and connections
 
-- **Need:** list the SSH hosts configured in Orca (id, label, user, host, port) and whether each is connected, and ask Orca to connect one. Orca would handle keys, passphrases and host-key prompts the same way it does for remote projects.
-- **Today:** plugins can see that a project lives on an SSH host (`hostId: "ssh:<id>"` in `workspace.list` and `project.list`), but can't list the hosts or connect one. The `orca host list --json` command lists them with whether each is connected, but not their connection details.
-- **In the code:** `PluginOrcaHost.listSshHosts()` and `connectSshHost()` in `packages/orca-plugin/src/worker/orca/pluginHost.ts`.
-
-### 2. `ssh-session`: commands and file transfer over Orca SSH (**blocking**)
-
-- **Need:** run a command on a host (with stdin/stdout streaming and an exit code), and list, read, write, stat and delete files over an Orca SSH connection. LocalDock's engine only needs the small `RemoteShell` and `RemoteFs` interfaces in `packages/core/src/ssh/types.ts`.
-- **Today:** not available to plugins. Orca's SSH relay already does all of this for remote projects.
-- **In the code:** `PluginOrcaHost.openSession()`.
-- **Alternative:** a plugin worker runs as the user, with `SSH_AUTH_SOCK` passed through, so it could open its own SSH connection if it knew a host's details (host, user, identity file). `packages/core/src/ssh/SshConnection.ts` already implements that, with host-key pinning.
+- **Would like:** list the SSH hosts configured in Orca (Settings → SSH) and run commands and transfer files over Orca's connection to one, with Orca handling keys, passphrases and host-key prompts as it does for remote projects. LocalDock's engine only needs the small `RemoteShell` and `RemoteFs` interfaces in `packages/core/src/ssh/types.ts`.
+- **Today:** plugins can see that a project lives on an SSH host (`hostId: "ssh:<id>"` in `workspace.list`), but can't list Orca's hosts' details or use its connections.
+- **What LocalDock does instead:** it uses the hosts in the user's SSH config, like the ork-db plugin. `ssh -G <alias>` resolves each one exactly as `ssh` would, `ssh-keygen -F` checks the server's key against `known_hosts`, and LocalDock opens one connection of its own (`packages/core/src/ssh/sshConfig.ts`, `SshConnection.ts`) with the user's identity files and agent. Spawning `ssh` per command would also work, but each spawn is a full SSH login (several seconds on a distant server), and a sync runs many commands. Sites saved with an Orca SSH host id (from the private fork) are found through `orca host list` when an SSH config alias has the same name.
+- **Limits:** hosts added only in Orca's settings (not in the SSH config) don't show up; jump hosts (`ProxyJump`, `ProxyCommand`) aren't supported; passphrase-protected keys need the agent.
+- **In the code:** `PluginOrcaHost.listSshHosts()`, `findSshHost()` and `openSession()` in `packages/orca-plugin/src/worker/orca/pluginHost.ts`. If Orca adds an SSH API, only these change.
 
 ## Also on the wishlist
 

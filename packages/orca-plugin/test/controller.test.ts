@@ -498,7 +498,7 @@ describe('LocalDockController', () => {
       return fakeServerSession();
     };
     await ctl.dispatch({ type: 'dismiss-notice' });
-    const job = ctl.dispatch({ type: 'start-docker' });
+    const job = ctl.dispatch({ type: 'scan-changes' });
     await vi.waitFor(() => expect(ctl.state().job).not.toBeNull());
     expect((await ctl.dispatch({ type: 'stop' })).notice?.text).toMatch(/^Wait for/);
     release2();
@@ -566,11 +566,36 @@ describe('PluginOrcaHost (host API 1)', () => {
     expect(runs).toHaveLength(2);
   });
 
-  it('reports the SSH capabilities as pending', async () => {
-    const h = new PluginOrcaHost(orca(null));
-    await expect(h.listSshHosts()).rejects.toMatchObject({ gap: 'ssh-hosts' });
-    await expect(h.connectSshHost('x')).rejects.toMatchObject({ gap: 'ssh-hosts' });
-    await expect(h.openSession('x')).rejects.toMatchObject({ gap: 'ssh-session' });
+  it('uses the hosts in the user’s ssh config, and finds sites saved with an Orca SSH host id', async () => {
+    const runs: string[][] = [];
+    const runner = {
+      run: async (cmd: string, args: readonly string[]) => {
+        runs.push([cmd, ...args]);
+        if (args[0] === '-G') return { code: 0, stderr: '', stdout: `user root
+hostname ${args[1]}.example.com
+port 22
+` };
+        if (args[0] === 'host') {
+          return { code: 0, stderr: '', stdout: JSON.stringify({ ok: true, result: { hosts: [{ kind: 'ssh', id: 'ssh-123-abc', name: 'example-server' }] } }) };
+        }
+        return { code: 1, stdout: '', stderr: '' };
+      },
+    };
+    const connected: string[] = [];
+    const fakeConn = { sftp: async () => ({}), close: () => {} } as never;
+    const h = new PluginOrcaHost(orca(null), runner, ['/nowhere/orca'], {
+      aliases: async () => ['example-server', 'other'],
+      connect: async (alias) => (connected.push(alias), fakeConn),
+    });
+    expect(await h.listSshHosts()).toEqual([
+      { id: 'example-server', label: 'example-server', host: 'example-server.example.com', port: 22, username: 'root', connected: true },
+      { id: 'other', label: 'other', host: 'other.example.com', port: 22, username: 'root', connected: true },
+    ]);
+    expect((await h.findSshHost('ssh-123-abc'))?.id).toBe('example-server');
+    expect(await h.findSshHost('ssh-999-gone')).toBeNull();
+    await h.openSession('ssh-123-abc');
+    expect(connected).toEqual(['example-server']);
+    await expect(h.openSession('nope')).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
 

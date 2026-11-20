@@ -81,11 +81,27 @@ export class SshConnection implements RemoteShell {
         registerSecret(target.auth.password);
         config.password = target.auth.password;
         break;
+      case 'keys-then-agent': {
+        const keys = await Promise.all(target.auth.keyPaths.map((p) => fs.readFile(p).catch(() => null)));
+        const agent = defaultAgent();
+        if (agent) config.agent = agent;
+        const queue: Array<Record<string, unknown>> = [
+          ...keys.filter((k): k is Buffer => k !== null).map((key) => ({ type: 'publickey', username: target.username, key })),
+          ...(agent ? [{ type: 'agent', username: target.username, agent }] : []),
+        ];
+        if (queue.length === 0) throw new LocalDockError('No SSH key or agent to log in with', 'AUTH_FAILED');
+        // ssh2 skips keys it can't use without a passphrase and moves on, as ssh does in batch mode.
+        config.authHandler = (_methodsLeft, _partial, next) => next((queue.shift() ?? false) as never);
+        break;
+      }
     }
 
     let seen: string | undefined;
     config.hostVerifier = (key: Buffer) => {
       seen = fingerprintHostKey(key);
+      if (target.knownHostKeys) {
+        return target.knownHostKeys.includes(seen);
+      }
       if (target.hostKeyFingerprint) {
         return seen === target.hostKeyFingerprint;
       }
@@ -96,7 +112,24 @@ export class SshConnection implements RemoteShell {
     await new Promise<void>((resolve, reject) => {
       client.once('ready', () => resolve());
       client.once('error', (err) => {
-        if (seen && target.hostKeyFingerprint && seen !== target.hostKeyFingerprint) {
+        if (seen && target.knownHostKeys && !target.knownHostKeys.includes(seen)) {
+          const how = target.trustCommand ? `Connect once with "${target.trustCommand}" in a terminal` : 'Connect once with ssh in a terminal';
+          reject(
+            target.knownHostKeys.length === 0
+              ? new LocalDockError(
+                  `${target.host} isn't in your known_hosts yet. ${how} to check and trust its key, then try again.`,
+                  'HOST_KEY_UNKNOWN',
+                  true,
+                )
+              : new LocalDockError(
+                  `The SSH host key for ${target.host} doesn't match your known_hosts (got ${seen}). This happens when a server is ` +
+                    'reinstalled or migrated, but it can also mean the connection is being intercepted. Check with your host, ' +
+                    `then fix the entry (${how.toLowerCase()} to see ssh's own warning).`,
+                  'HOST_KEY_MISMATCH',
+                  true,
+                ),
+          );
+        } else if (seen && target.hostKeyFingerprint && seen !== target.hostKeyFingerprint) {
           reject(
             new LocalDockError(
               `The SSH host key for ${target.host} has changed (expected ${target.hostKeyFingerprint}, got ${seen}). ` +

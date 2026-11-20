@@ -6,7 +6,7 @@ Please **don't open a public issue**. Report it privately through [GitHub Securi
 
 ## What LocalDock does on a server
 
-LocalDock acts with the SSH access of the Orca SSH host you choose. If that host logs in as root on a WHM server, LocalDock can reach every account on it. It uses that access only to:
+LocalDock acts with the SSH access of the host you choose from your SSH config. If that host logs in as root on a WHM server, LocalDock can reach every account on it. It uses that access only to:
 
 - list cPanel accounts and domains (`whmapi1`, `uapi`)
 - read, write and delete files inside the docroot of the site you pulled (listing it with `find`, downloading with `tar -cz` streamed over SSH)
@@ -16,10 +16,17 @@ LocalDock acts with the SSH access of the Orca SSH host you choose. If that host
 
 It installs nothing on the server.
 
+## How LocalDock connects
+
+- It reads your SSH config the way `ssh` does (`ssh -G <alias>` resolves HostName, User, Port and IdentityFile, Include and Match included).
+- It trusts a server only if its host key is in your `known_hosts` (checked with `ssh-keygen -F`). An unknown host is refused with a message to connect once with `ssh <alias>` in a terminal, where ssh shows you the fingerprint. A changed key is refused as a possible interception. LocalDock never adds or changes `known_hosts` entries.
+- It logs in with your identity files, then your SSH agent, in the same order as `ssh`. Passphrase-protected keys need to be in the agent. Keys are read into the worker's memory for the connection only; nothing is stored.
+
 ## Threat model and mitigations
 
 | Risk | Mitigation |
 |---|---|
+| Connecting to an impostor server | Only host keys already in your `known_hosts` are accepted; unknown or changed keys are refused. |
 | A hostile file name, domain or `wp-config.php` value injecting shell commands | Remote commands quote every argument (`shq`). Account names, domains, database identifiers and hosts are validated. Panel actions can't carry shell text. |
 | Push or delete escaping the site | Every path is normalized and confined to the docroot locally, and to the project folder on this machine. |
 | A tampered download archive | Only regular files LocalDock asked for are unpacked, each through the same path confinement; links, devices and unrequested entries are skipped. |

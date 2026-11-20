@@ -54,18 +54,20 @@ export interface StatusItem {
 }
 
 /**
- * Everything LocalDock asks of Orca. Methods marked GAP have no Orca API yet
- * and throw OrcaApiPendingError in the public build. A private fork can
- * implement them with workarounds without touching anything else.
+ * Everything LocalDock asks of its surroundings: Orca's plugin API, plus SSH
+ * (the user's own ssh config, since Orca doesn't share its SSH hosts with
+ * plugins). A fork can swap any of it without touching anything else.
  */
 export interface OrcaHost {
   /** The project focused in Orca, or null when none is. */
   activeProject(): Promise<ProjectInfo | null>;
-  /** GAP ssh-hosts: SSH hosts configured in Orca (Settings → SSH). */
+  /** SSH hosts LocalDock can use. */
   listSshHosts(): Promise<SshHostInfo[]>;
-  /** GAP ssh-hosts: ask Orca to connect to a host (it handles keys, passphrases and host-key prompts). */
+  /** One host by id, including ids saved by older versions; defaults to searching listSshHosts(). */
+  findSshHost?(hostId: string): Promise<SshHostInfo | null>;
+  /** Make sure a host is reachable before using it (a no-op when LocalDock connects by itself). */
   connectSshHost(hostId: string): Promise<void>;
-  /** GAP ssh-session: run commands and transfer files over Orca's connection to a host. */
+  /** Run commands and transfer files on a host. */
   openSession(hostId: string): Promise<RemoteSession>;
 
   /** Open a URL in a tab of Orca's own browser, in the given project. False when that isn't possible here. */

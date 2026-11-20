@@ -303,7 +303,7 @@ export class LocalDockController {
     if (!project) return;
     if (!this.setUpDirs.has(project.path)) return this.setView({ view: 'set-up', projectName: path.basename(project.path) });
     if (this.discovered) {
-      const host = (await this.deps.host.listSshHosts()).find((h) => h.id === this.discovered!.hostId);
+      const host = await this.findHost(this.discovered.hostId);
       if (host) {
         return this.setView({
           view: 'site-list',
@@ -341,10 +341,15 @@ export class LocalDockController {
   }
 
   private async requireHost(hostId: string): Promise<SshHostInfo> {
-    const host = (await this.deps.host.listSshHosts()).find((h) => h.id === hostId);
-    if (!host) throw new LocalDockError('That SSH host is no longer configured in Orca.', 'NOT_FOUND', false);
+    const host = await this.findHost(hostId);
+    if (!host) throw new LocalDockError('That SSH host isn’t set up anymore. Check that it’s still in your SSH config (~/.ssh/config).', 'NOT_FOUND', false);
     if (!host.connected) await this.deps.host.connectSshHost(hostId);
     return host;
+  }
+
+  private findHost(hostId: string): Promise<SshHostInfo | null> {
+    const host = this.deps.host;
+    return host.findSshHost ? host.findSshHost(hostId) : host.listSshHosts().then((all) => all.find((h) => h.id === hostId) ?? null);
   }
 
   private async session(hostId: string) {
@@ -754,7 +759,7 @@ export class LocalDockController {
 
   private async hostLabel(hostId: string): Promise<string | undefined> {
     try {
-      const live = (await this.deps.host.listSshHosts()).find((h) => h.id === hostId);
+      const live = await this.findHost(hostId);
       if (live) return live.label;
     } catch (err) {
       if (!isOrcaApiPending(err)) throw err;

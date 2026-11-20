@@ -1,8 +1,15 @@
 import { existsSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { processRunner, type CommandRunner } from '@localdock/core';
-import { OrcaApiPendingError } from '../../shared/gaps.js';
+import {
+  LocalDockError,
+  connectSshAlias,
+  listSshConfigAliases,
+  processRunner,
+  resolveSshHost,
+  type CommandRunner,
+  type SshConnection,
+} from '@localdock/core';
 import type { OrcaHost, OrcaWorkerApi, ProjectInfo, RemoteSession, SshHostInfo, StatusItem } from './host.js';
 
 interface WorkspaceContext {
@@ -39,9 +46,9 @@ function orcaCliEnv(env = process.env, platform = process.platform): NodeJS.Proc
 const STATUS_ITEM_ID = 'site';
 
 /**
- * OrcaHost backed by Orca's plugin host API 1. Implements what the API offers
- * and throws OrcaApiPendingError for the rest. When Orca adds a capability,
- * fill in the matching method here (and drop the gap from docs/ORCA-GAPS.md).
+ * OrcaHost backed by Orca's plugin host API 1, plus SSH through the user's own
+ * ssh config (Orca has no plugin API for its SSH hosts yet). When Orca adds
+ * one, swap the SSH methods here (see docs/ORCA-GAPS.md).
  */
 export class PluginOrcaHost implements OrcaHost {
   constructor(
@@ -49,6 +56,10 @@ export class PluginOrcaHost implements OrcaHost {
     private readonly runner: CommandRunner = processRunner,
     /** Where to look for Orca's CLI launcher; the first that exists wins, then `orca` on PATH. */
     private readonly cliCandidates: string[] = orcaCliCandidates(),
+    private readonly ssh: {
+      aliases: () => Promise<string[]>;
+      connect: (alias: string) => Promise<SshConnection>;
+    } = { aliases: () => listSshConfigAliases(), connect: (alias) => connectSshAlias(alias, { runner }) },
   ) {}
 
   /**
@@ -78,16 +89,58 @@ export class PluginOrcaHost implements OrcaHost {
     return { path: path.resolve(ws.path), name };
   }
 
+  /**
+   * The Host aliases in the user's ~/.ssh/config. Orca doesn't share its SSH
+   * hosts or connections with plugins, so LocalDock uses what `ssh` uses:
+   * the same config, keys, agent and known_hosts.
+   */
   async listSshHosts(): Promise<SshHostInfo[]> {
-    throw new OrcaApiPendingError('ssh-hosts');
+    const aliases = await this.ssh.aliases();
+    const hosts = await Promise.all(
+      aliases.map(async (alias) => {
+        try {
+          const h = await resolveSshHost(alias, this.runner);
+          return { id: alias, label: alias, host: h.hostname, port: h.port, username: h.user, connected: true };
+        } catch (err) {
+          this.log(`SSH host ${alias}: ${(err as Error).message}`);
+          return null;
+        }
+      }),
+    );
+    return hosts.filter((h): h is SshHostInfo => h !== null);
   }
 
-  async connectSshHost(_hostId: string): Promise<void> {
-    throw new OrcaApiPendingError('ssh-hosts');
+  /** A host by alias, or by the Orca SSH host id older versions saved, when an alias has that host's name. */
+  async findSshHost(hostId: string): Promise<SshHostInfo | null> {
+    const hosts = await this.listSshHosts();
+    const direct = hosts.find((h) => h.id === hostId);
+    if (direct) return direct;
+    const name = await this.orcaHostName(hostId);
+    return (name && hosts.find((h) => h.id === name)) || null;
   }
 
-  async openSession(_hostId: string): Promise<RemoteSession> {
-    throw new OrcaApiPendingError('ssh-session');
+  async connectSshHost(_hostId: string): Promise<void> {}
+
+  async openSession(hostId: string): Promise<RemoteSession> {
+    const host = await this.findSshHost(hostId);
+    if (!host) throw new LocalDockError(`No SSH host "${hostId}" in your SSH config (~/.ssh/config).`, 'NOT_FOUND', false);
+    const conn = await this.ssh.connect(host.id);
+    const sftp = await conn.sftp();
+    return { shell: conn, sftp, close: () => conn.close() };
+  }
+
+  /** The name Orca shows for one of its SSH hosts (`orca host list`), or null. */
+  private async orcaHostName(hostId: string): Promise<string | null> {
+    if (!/^ssh-[\w-]+$/.test(hostId)) return null;
+    const cli = this.cliCandidates.find((c) => existsSync(c)) ?? 'orca';
+    const r = await this.runner.run(cli, ['host', 'list', '--json'], { env: orcaCliEnv() }).catch(() => null);
+    if (!r || r.code !== 0) return null;
+    try {
+      const hosts = (JSON.parse(r.stdout) as { result?: { hosts?: Array<{ id?: string; name?: string }> } }).result?.hosts ?? [];
+      return hosts.find((h) => h.id === hostId)?.name ?? null;
+    } catch {
+      return null;
+    }
   }
 
   async notify(title: string, body?: string): Promise<void> {

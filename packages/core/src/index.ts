@@ -11,6 +11,7 @@ export * from './util/fsRetry.js';
 
 export * from './ssh/types.js';
 export * from './ssh/SshConnection.js';
+export * from './ssh/sshConfig.js';
 
 export * from './discovery/cpanelApi.js';
 export * from './discovery/wpConfig.js';

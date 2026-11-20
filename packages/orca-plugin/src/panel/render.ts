@@ -92,7 +92,7 @@ function renderView(state: PanelState, ui: UiState): string {
     case 'no-hosts':
       return empty(
         'Connect a cPanel server',
-        'Add an SSH host in Orca (Settings → SSH) that points at a cPanel server. Log in as root to see every account, or as a cPanel account user to see that account’s sites.',
+        'Add a Host to your SSH config (~/.ssh/config) that points at a cPanel server, and connect to it once with ssh in a terminal so its key is in known_hosts. Log in as root to see every account, or as a cPanel account user to see that account’s sites.',
         button('Check again', { type: 'refresh' }, { primary: true }),
       );
     case 'choose-host':
@@ -126,7 +126,7 @@ export function renderAwaitingOrca(gaps: GapInfo[], blockedAction?: string): str
 
 function renderHosts(hosts: HostSummary[]): string {
   return `<h2>Choose a server</h2>
-  <p class="muted">SSH hosts from Orca. LocalDock lists the WordPress sites on the cPanel server behind each one.</p>
+  <p class="muted">SSH hosts from your SSH config. LocalDock lists the WordPress sites on the cPanel server behind each one.</p>
   <ul class="list">${hosts
     .map(
       (h) => `<li class="row">

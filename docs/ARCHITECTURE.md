@@ -6,7 +6,7 @@
 │ ┌──────────────────────────┐ │request │ main.ts   handlers, commands, events │
 │ │ LocalDock panel (iframe) │◄├───────►┤ controller.ts  state machine         │
 │ │ render.ts · app.ts       │ │  post  │ orca/pluginHost.ts ── host API ──► Orca│
-│ │ bridge.ts                │ │        │            │   (SSH: gaps 1–2)       │
+│ │ bridge.ts                │ │        │            │   SSH: your ssh config  │
 │ └──────────────────────────┘ │        │            ▼                         │
 │ Status bar: site ↑3 ↓1       │        │  @localdock/core (engine)            │
 └──────────────────────────────┘        │   discovery · sync · db · ddev       │
@@ -14,7 +14,7 @@
                                                │ RemoteShell/Fs │ ddev CLI
                                                ▼                ▼
                                         cPanel server     local DDEV project
-                                        (via Orca SSH)    (the Orca project folder)
+                                        (via SSH)         (the Orca project folder)
 ```
 
 ## Packages
@@ -37,7 +37,7 @@ This package has no Orca or VS Code dependencies.
   - Media (`wp-content/uploads`) isn't pulled, except for the CSS that themes and page builders generate there. Missing media is redirected to the live site.
   - On Windows, the project's drive is mounted inside Docker Desktop's WSL distro before each start, so projects on removable drives work.
   - Docker housekeeping: stopping the last site runs `ddev poweroff`, Docker Desktop can be started and quit from the panel, and "Free up space" removes only DDEV images tagged for another DDEV version.
-- `ssh/`: the `RemoteShell` and `RemoteFs` interfaces the engine runs on. `SshConnection` is an ssh2 implementation with host-key pinning, for the case where Orca exposes connection details rather than sessions.
+- `ssh/`: the `RemoteShell` and `RemoteFs` interfaces the engine runs on. `SshConnection` is the ssh2 implementation: one connection per host, trusting either the user's `known_hosts` keys or a pinned key. `sshConfig.ts` lists the aliases in `~/.ssh/config`, resolves one with `ssh -G`, looks its key up with `ssh-keygen -F`, and connects with the user's identity files, then the agent.
 
 ### `packages/orca-plugin`: the plugin
 
@@ -48,14 +48,14 @@ This package has no Orca or VS Code dependencies.
 - `src/worker/controller.ts`: the state machine:
   `no-project | project-not-empty | set-up → no-hosts | choose-host → scanning → site-list → pulling → tracking`. An empty project stays at `set-up` until the user opts in.
   In `tracking`, the panel looks like Source Control and has DDEV controls. Panel actions are validated with zod (`shared/actionSchema.ts`). A pull only accepts sites the worker discovered itself.
-- `src/worker/orca/`: `OrcaHost` is the interface to everything Orca provides. `PluginOrcaHost` implements it with Orca's host API 1 and throws `OrcaApiPendingError` for the two SSH gaps.
+- `src/worker/orca/`: `OrcaHost` is the interface to everything Orca provides. `PluginOrcaHost` implements it with Orca's host API 1, and SSH with the user's SSH config (Orca doesn't share its SSH hosts with plugins).
 - `src/panel/`: the UI. `render.ts` is a pure function from state to HTML, and every string from the server is escaped. Confirmations happen inline, because the sandbox blocks `confirm()`. `bridge.ts` is the panel's side of the messaging (`window.orca.plugin`). Link buttons and the local URL ask the worker (`open` request) to open a tab in Orca's browser through Orca's CLI; if that fails, the panel opens the default browser with `orca.shell.openExternal`, which Orca only allows from a click in the frame. Colors come from Orca's `--orca-*` frame variables.
 - `src/preview/`: a browser preview with sample states. It's not shipped.
 - `scripts/build.mjs`: bundles the worker into `dist/worker.mjs`, and inlines the panel's script and CSS into `dist/panel/index.html`, so it also works in browser clients of `orca serve`, whose frames allow inline only.
 
 ## Swap points
 
-Everything Orca-specific sits behind two seams. A fork that experiments with workarounds for the SSH gaps, or the real implementation once Orca ships those APIs, only touches these:
+Everything Orca-specific sits behind two seams. A fork that connects differently (for example to Orca's own SSH hosts), or a future version using an Orca SSH API, only touches these:
 
 | Seam | File | What changes |
 |---|---|---|
