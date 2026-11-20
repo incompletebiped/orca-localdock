@@ -86,7 +86,7 @@ export class SshConnection implements RemoteShell {
         const agent = defaultAgent();
         if (agent) config.agent = agent;
         const queue: Array<Record<string, unknown>> = [
-          ...keys.filter((k): k is Buffer => k !== null).map((key) => ({ type: 'publickey', username: target.username, key })),
+          ...keys.filter((k) => k !== null).map((key) => ({ type: 'publickey', username: target.username, key })),
           ...(agent ? [{ type: 'agent', username: target.username, agent }] : []),
         ];
         if (queue.length === 0) throw new LocalDockError('No SSH key or agent to log in with', 'AUTH_FAILED');
