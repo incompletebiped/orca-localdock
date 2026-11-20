@@ -155,7 +155,7 @@ export class SshConnection implements RemoteShell {
               true,
             ),
           );
-        } else if (seen && !target.hostKeyFingerprint && options.acceptHostKey !== seen) {
+        } else if (seen && !target.knownHostKeys && !target.hostKeyFingerprint && options.acceptHostKey !== seen) {
           const e = new LocalDockError(
             `Unknown SSH host key for ${target.host}: ${seen}. Confirm this fingerprint to trust the server.`,
             'HOST_KEY_UNKNOWN',
