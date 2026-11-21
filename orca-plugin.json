@@ -1,0 +1,94 @@
+{
+  "manifestVersion": 2,
+  "execution": "trusted-worker",
+  "id": "localdock",
+  "name": "LocalDock",
+  "version": "0.1.0",
+  "description": "Pull WordPress sites from cPanel servers over SSH, run them locally with DDEV, and sync changes back like Source Control.",
+  "license": "MIT",
+  "repository": "https://github.com/incompletebiped/orca-localdock",
+  "icon": "docs/media/icon.png",
+  "cover": {
+    "path": "docs/media/cover.png",
+    "alt": "LocalDock for Orca, beside its sidebar showing local and server changes for an example WordPress site."
+  },
+  "screenshots": [
+    {
+      "path": "docs/media/screenshot-sync.png",
+      "alt": "The LocalDock sidebar listing local changes, server changes and files changed on both sides, grouped by theme and plugin.",
+      "caption": "Sync like Source Control"
+    },
+    {
+      "path": "docs/media/screenshot-pull.png",
+      "alt": "The list of WordPress sites found on a cPanel server, and the offer to resume a pull that stopped part-way.",
+      "caption": "Pick a site, pull it, resume if it stops"
+    },
+    {
+      "path": "docs/media/screenshot-database.png",
+      "alt": "The database section with table groups to push, and a notice that the live database was backed up first.",
+      "caption": "Push the database, with a backup"
+    }
+  ],
+  "engines": {
+    "orca": ">=1.4.248"
+  },
+  "pluginApi": 1,
+  "main": "plugin/worker.mjs",
+  "contributes": {
+    "panels": [
+      {
+        "id": "sites",
+        "title": "LocalDock",
+        "icon": "database",
+        "entry": "plugin/panel/index.html"
+      }
+    ],
+    "commands": [
+      {
+        "id": "localdock.refresh",
+        "title": "LocalDock: Refresh",
+        "when": "workspace"
+      },
+      {
+        "id": "localdock.scan-changes",
+        "title": "LocalDock: Check for changes",
+        "when": "workspace"
+      },
+      {
+        "id": "localdock.start",
+        "title": "LocalDock: Start local site (DDEV)",
+        "when": "workspace"
+      },
+      {
+        "id": "localdock.stop",
+        "title": "LocalDock: Stop local site (DDEV)",
+        "when": "workspace"
+      }
+    ],
+    "events": [
+      {
+        "on": "workspace.changed"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "site",
+        "text": "LocalDock",
+        "icon": "database",
+        "tooltip": "LocalDock",
+        "command": "localdock.scan-changes"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "notifications:show"
+    },
+    {
+      "kind": "storage:own"
+    }
+  ]
+}

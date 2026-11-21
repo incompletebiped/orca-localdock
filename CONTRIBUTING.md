@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest! LocalDock is a work in progress that's waiting on Orca plugin APIs (see [docs/ORCA-GAPS.md](docs/ORCA-GAPS.md)). Please open an issue to discuss a change before sending a large pull request.
+Thanks for your interest! LocalDock is an early version; [docs/ORCA-GAPS.md](docs/ORCA-GAPS.md) covers what it still needs from Orca. Please open an issue to discuss a change before sending a large pull request.
 
 ## Development
 
@@ -9,7 +9,7 @@ npm install
 npm test            # vitest across all packages
 npm run typecheck
 npm run lint
-npm run build       # plugin → packages/orca-plugin/dist (load it in Orca: orca plugin dev load packages/orca-plugin/dist)
+npm run build       # plugin → plugin/ (commit it with your change; load it in Orca: orca plugin dev load .)
 npm run preview     # panel preview with sample data → packages/orca-plugin/preview/index.html
 ```
 
@@ -23,4 +23,5 @@ npm run preview     # panel preview with sample data → packages/orca-plugin/pr
 - **The panel escapes everything** it renders (`esc` in `packages/orca-plugin/src/panel/render.ts`) and can't use `confirm()`/`alert()`, because the sandbox blocks them.
 - **Orca-specific code stays behind `OrcaHost` and the panel bridge**, so the engine and UI never depend on Orca internals.
 - Add tests for sync logic, path handling, panel rendering and anything that touches a server.
+- **Commit the rebuilt `plugin/` with source changes.** Installs from Git run no build, and CI fails when `plugin/` doesn't match the source.
 - Report security issues privately; see [SECURITY.md](SECURITY.md).

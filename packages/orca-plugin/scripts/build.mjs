@@ -1,17 +1,17 @@
-// Builds the plugin folder Orca loads (dist/) and, with --preview, a browser
-// preview of the panel (preview/index.html).
+// Builds the plugin's code into plugin/ at the repository root and, with --preview, a browser preview
+// of the panel (packages/orca-plugin/preview/index.html). The repository root is the plugin folder:
+// orca-plugin.json there names these files, and they're committed, since installs from Git run no build.
 //
-//   dist/orca-plugin.json   manifest
-//   dist/worker.mjs         worker bundle (engine included)
-//   dist/panel/index.html   panel, with its script and styles inlined (the desktop app could load them by
-//                           relative URL, but browser clients of `orca serve` allow inline only)
+//   plugin/worker.mjs         worker bundle (engine included)
+//   plugin/panel/index.html   panel, with its script and styles inlined (the desktop app could load them by
+//                             relative URL, but browser clients of `orca serve` allow inline only)
 import { build } from 'esbuild';
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const dist = join(root, 'dist');
+const dist = join(root, '..', '..', 'plugin');
 const preview = process.argv.includes('--preview');
 
 /** Bundle a browser entry to a string of JS that's safe to inline in a <script>. */
@@ -79,13 +79,7 @@ await writeFile(
   join(dist, 'panel/index.html'),
   page({ title: 'LocalDock', css, js: await bundleBrowser('src/panel/main.ts'), body: '<div id="app"></div>' }),
 );
-await copyFile(join(root, 'orca-plugin.json'), join(dist, 'orca-plugin.json'));
-// The icon, cover and screenshots the manifest names, from docs/media (made by docs/media/src).
-const manifest = JSON.parse(await readFile(join(root, 'orca-plugin.json'), 'utf-8'));
-const images = [manifest.icon, manifest.cover?.path, ...(manifest.screenshots ?? []).map((s) => s.path)].filter(Boolean);
-await mkdir(join(dist, 'media'), { recursive: true });
-for (const image of images) await copyFile(join(root, '..', '..', 'docs', image), join(dist, image));
-console.log('Built plugin → packages/orca-plugin/dist');
+console.log('Built plugin → plugin/');
 
 if (preview) {
   const dir = join(root, 'preview');

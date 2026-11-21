@@ -10,7 +10,7 @@ Everything here uses the panel's sample states (`packages/orca-plugin/src/previe
 | `screenshot-*.png` | 1600×1000 | The manifest `screenshots` |
 | `panel-*.png` | 720 wide | The README's screenshots: the sidebar at 2× |
 
-The build copies the files the manifest names into `packages/orca-plugin/dist/media/`.
+The manifest (`orca-plugin.json` at the repository root) names `icon.png`, `cover.png` and the `screenshot-*.png` files here directly.
 
 ## Making them again
 

@@ -38,6 +38,73 @@ Nothing is installed on your server, and LocalDock stores no server details: it 
 
 Screenshots use made-up sample data (example.com). See [docs/media](docs/media/README.md) for how they're made.
 
+## Install
+
+### What you need
+
+- [Orca](https://github.com/stablyai/orca) 1.4.248 or later, with plugins turned on (**Settings → Plugins**)
+- [DDEV](https://ddev.com/get-started/) and the Docker it uses (Docker Desktop, OrbStack, Colima, …), to run sites locally. You can pull a site without them and start it later.
+- OpenSSH: `ssh` and `ssh-keygen`, built into Windows 10 and later, macOS and Linux
+- SSH access to a cPanel server, as root (sees every account on a WHM server) or as a cPanel account's own user (sees that account's sites). Jump hosts (`ProxyJump`) aren't supported yet.
+
+### 1. Install the plugin
+
+From the plugin's page in [Orca's plugin directory](https://orca.dev/plugins/incompletebiped/orca-localdock), or from a terminal:
+
+```sh
+orca plugin install incompletebiped/orca-localdock
+```
+
+Orca shows what LocalDock asks for (see [Access it asks for](#access-it-asks-for)) and prints the same command with `--approve <fingerprint>`. Run that to install it. Later versions come with `orca plugin update incompletebiped.localdock`, and `orca plugin uninstall incompletebiped.localdock` removes it.
+
+### 2. Add your server to your SSH config
+
+LocalDock lists the `Host` entries in `~/.ssh/config` (`C:\Users\<you>\.ssh\config` on Windows). Add one for your server if it isn't there:
+
+```
+Host example-server
+    HostName server.example.com
+    User root
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+Then connect once in a terminal, so you can check the server's key and `ssh` saves it to `known_hosts`. LocalDock only trusts servers whose key is there:
+
+```sh
+ssh example-server
+```
+
+A key with a passphrase needs to be in your SSH agent (`ssh-add`).
+
+### 3. Pull a site
+
+1. Create a new, empty project in Orca and open it.
+2. Open the **LocalDock** tab in the right sidebar and click **Use LocalDock in this project**.
+3. Pick your server, then **Scan for sites**, then **Pull** next to the site you want.
+
+The files and database come down into the project, and DDEV starts the site if it's installed. From then on the tab is the sync view for that project.
+
+## Access it asks for
+
+Orca asks you to approve this when you install LocalDock (`orca plugin inspect` shows the same):
+
+| Orca permission | Why LocalDock needs it |
+|---|---|
+| **Runs its own code** in a separate Node.js process, with your user account's access (`trusted-worker`) | To run `ssh`, `ddev` and `docker`, and to read and write site files. Orca has no narrower permission for that. |
+| **Read your projects and workspaces** (`workspace:read`) | To follow the project you focus and find its folder. LocalDock only acts in projects you set up with it. |
+| **Show desktop notifications** (`notifications:show`) | To say when a pull finishes. |
+| **Store data in its own storage folder** (`storage:own`) | To remember host names and which server, account and folder each pulled site came from (see [SECURITY.md](SECURITY.md)). |
+
+It adds the **LocalDock** sidebar tab, four commands (**Refresh**, **Check for changes**, **Start local site**, **Stop local site**) and a status bar item.
+
+What it does with that access:
+
+- **On this computer** it reads `~/.ssh/config` (through `ssh -G`), `known_hosts` (through `ssh-keygen -F`) and the identity files `ssh` would use, which stay in memory for the connection only. It runs `ssh`, `ssh-keygen`, `ddev` and `docker` (to start and quit Docker Desktop, and to remove old DDEV images when you ask). On Windows it also runs `wsl` to make the project's drive visible to Docker, and Orca's own `orca` command to open links in Orca's browser. Programs are found only in your PATH's absolute folders, never in the project folder.
+- **It writes** only to the project folder you pulled into (the site's files, `.localdock/`, `.ddev/`, a local `wp-config.php` and two small local-only helper files) and to its own storage in Orca.
+- **On your server** it lists cPanel accounts and domains, reads and writes files in the docroot of the site you pulled, dumps and imports that site's database, keeps a backup in `~/.localdock-backups/` before each database push, and writes a short-lived MySQL option file to `~/.localdock-tmp/` while a database step runs. It installs nothing there. [SECURITY.md](SECURITY.md) has the details.
+- **Network:** only SSH, to the servers you pick. No telemetry, and the panel itself has no network access.
+- **Never:** it doesn't store passwords, download production's `wp-config.php`, or add or change `known_hosts` entries.
+
 ## Status
 
 | Part | State |
@@ -80,16 +147,19 @@ Open `packages/orca-plugin/preview/index.html` and switch between states with th
 
 ## Load it in Orca (for development)
 
+The repository root is the plugin folder: `orca-plugin.json` there names the built worker and panel in `plugin/`, which are committed, because installs from Git run no build. After changing the source, rebuild and commit `plugin/` with it (CI checks that it matches):
+
 ```sh
-npm run build        # builds packages/orca-plugin/dist
+npm install
+npm run build        # builds plugin/worker.mjs and plugin/panel/index.html
 ```
 
-Load the folder as a development plugin, either in Orca (**Settings → Plugins → Development folders…**) or from a terminal:
+Load the repository as a development plugin, either in Orca (**Settings → Plugins → Development folders…**) or from a terminal. Uninstall the released version first, or disable one of the two:
 
 ```sh
-orca plugin dev load packages/orca-plugin/dist     # prints the approval command to run next
-orca plugin logs local.localdock                   # what the worker printed
-orca plugin dev request packages/orca-plugin/dist state   # call the worker as the panel does
+orca plugin dev load .                 # prints the approval command to run next
+orca plugin logs local.localdock       # what the worker printed
+orca plugin dev request . state        # call the worker as the panel does
 ```
 
 The LocalDock tab appears in the right sidebar and follows the project you focus. Create a new, empty project, focus it, and click **Use LocalDock in this project**.
@@ -105,18 +175,14 @@ npm run reset-project -- <project folder> --yes   # deletes it
 
 It deletes the site's DDEV project (containers and database) and every file except `.git` and the other files a new project starts with. It refuses folders without a `.localdock` folder.
 
-## Requirements
-
-- [Orca](https://github.com/stablyai/orca) 1.4.248 or later, with plugins enabled
-- [DDEV](https://ddev.com/get-started/) (and the Docker provider it uses)
-- OpenSSH (`ssh` and `ssh-keygen`; built into Windows 10+, macOS and Linux)
-- A `Host` in your SSH config pointing at a cPanel server (root or a cPanel account user), connected to once with `ssh` so its key is in `known_hosts`. Jump hosts (`ProxyJump`) aren't supported yet.
-
 ## Repository layout
 
 ```
+orca-plugin.json        the plugin manifest (the repository root is the plugin folder)
+plugin/                 the built worker and panel Orca runs (committed; made by npm run build)
 packages/core/          sync engine, independent of Orca (TypeScript, tested)
-packages/orca-plugin/   the Orca plugin: manifest, worker, sidebar panel, preview
+packages/orca-plugin/   the plugin's source: worker, sidebar panel, preview, build script
+docs/media/             icon, cover, screenshots and how they're made
 docs/ORCA-GAPS.md       which Orca APIs LocalDock uses, what Orca still needs to add, and where each gap lives
 docs/ARCHITECTURE.md    how the pieces fit together
 ```

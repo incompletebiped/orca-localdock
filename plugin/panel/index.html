@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LocalDock</title>
+<style>/* Orca sets its theme on plugin frames as --orca-* variables and updates them in place; fallbacks are for the browser preview. */
+:root {
+  color-scheme: light dark;
+  --ld-bg: var(--orca-background, #1e1e1e);
+  --ld-fg: var(--orca-foreground, #e4e4e4);
+  --ld-muted: var(--orca-muted-foreground, #9a9a9a);
+  --ld-border: var(--orca-border, #3a3a3a);
+  --ld-card: var(--orca-card, #252526);
+  --ld-accent: var(--orca-accent, #2f2f33);
+  --ld-primary: var(--orca-primary, #4c8dff);
+  --ld-primary-fg: var(--orca-primary-foreground, #fff);
+  --ld-danger: var(--orca-destructive, #e5484d);
+  --ld-radius: var(--orca-radius, 6px);
+  --ld-green: #3fb950;
+  --ld-yellow: #d29922;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font: 13px/1.45 var(--orca-font-sans, system-ui, -apple-system, 'Segoe UI', sans-serif);
+  color: var(--ld-fg);
+  background: var(--ld-bg);
+}
+main { padding: 10px 12px 24px; }
+h2 { font-size: 14px; margin: 4px 0 4px; word-break: break-all; }
+h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ld-muted); margin: 14px 0 4px; }
+p { margin: 6px 0; }
+code { font-size: 12px; word-break: break-all; }
+.muted { color: var(--ld-muted); }
+.small { font-size: 12px; }
+.pad { padding: 4px 8px; }
+.grow { flex: 1; min-width: 0; }
+
+.btn {
+  font: inherit; font-size: 12px; color: var(--ld-fg); background: var(--ld-accent);
+  border: 1px solid var(--ld-border); border-radius: var(--ld-radius); padding: 3px 9px; cursor: pointer; white-space: nowrap;
+}
+.btn:hover:not(:disabled) { filter: brightness(1.15); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn-primary { background: var(--ld-primary); color: var(--ld-primary-fg); border-color: transparent; }
+.btn-danger { border-color: var(--ld-danger); color: var(--ld-danger); background: transparent; }
+
+.input { width: 100%; margin: 8px 0 4px; padding: 5px 8px; font: inherit; color: var(--ld-fg); background: var(--ld-card); border: 1px solid var(--ld-border); border-radius: var(--ld-radius); }
+.check { display: flex; gap: 6px; align-items: flex-start; margin: 6px 0; cursor: pointer; }
+
+.toolbar { display: flex; gap: 6px; align-items: center; margin: 8px 0; }
+.server-off { margin: -2px 0 8px; }
+.list { list-style: none; margin: 0; padding: 0; }
+.row { display: flex; gap: 8px; align-items: center; padding: 7px 4px; border-bottom: 1px solid var(--ld-border); }
+.row strong { word-break: break-all; }
+
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dot-on { background: var(--ld-green); }
+.dot-off { background: var(--ld-muted); }
+
+.empty { padding: 20px 4px; }
+.empty .btn { margin-top: 8px; }
+.empty .btn + .btn { margin-left: 6px; }
+.gaps { padding-left: 18px; }
+.gaps li { margin: 6px 0; }
+
+.notice { display: flex; gap: 8px; align-items: flex-start; margin: 8px 12px 0; padding: 7px 9px; border-radius: var(--ld-radius); border: 1px solid var(--ld-border); background: var(--ld-card); }
+main .notice { margin: 8px 0; }
+.notice span { flex: 1; }
+.notice .btn { padding: 0 6px; }
+.notice-error { border-color: var(--ld-danger); }
+.notice-success { border-color: var(--ld-green); }
+
+.job { position: sticky; top: 0; z-index: 1; display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; align-items: center; padding: 8px 12px; background: var(--ld-card); border-bottom: 1px solid var(--ld-border); }
+.job-text { display: flex; flex-direction: column; min-width: 0; }
+.job-text span { color: var(--ld-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar { grid-column: 1 / -1; height: 3px; background: var(--ld-border); border-radius: 2px; overflow: hidden; }
+.bar-fill { height: 100%; background: var(--ld-primary); transition: width .2s; }
+.bar-fill.indeterminate { animation: slide 1.2s ease-in-out infinite; }
+@keyframes slide { from { margin-left: -30%; } to { margin-left: 100%; } }
+
+.site { margin-bottom: 6px; }
+.ddev { display: flex; gap: 8px; align-items: center; padding: 6px 0; }
+.links { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.link {
+  font: inherit; font-family: var(--orca-font-mono, ui-monospace, monospace); font-size: 12px; color: var(--ld-primary);
+  background: none; border: 0; padding: 0; cursor: pointer; text-align: left; word-break: break-all; text-decoration: underline;
+}
+.link:hover { opacity: .85; }
+
+.section { border-top: 1px solid var(--ld-border); margin: 0 -12px; }
+.section > summary { display: flex; align-items: center; gap: 6px; padding: 6px 12px; cursor: pointer; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; list-style: none; }
+.section > summary::-webkit-details-marker { display: none; }
+.section > summary::before { content: '›'; display: inline-block; transition: transform .15s; }
+.section[open] > summary::before { transform: rotate(90deg); }
+.section-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 8px; }
+.badge { min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--ld-accent); text-align: center; font-weight: 500; }
+
+.group-head { display: flex; align-items: center; gap: 6px; padding: 3px 12px; white-space: nowrap; }
+.group-head:hover { background: var(--ld-accent); }
+.group-toggle { flex: 1; min-width: 0; display: flex; gap: 4px; align-items: baseline; font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+.group-name { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.group .changes .change { padding-left: 34px; }
+.btn-small { font-size: 11px; padding: 1px 7px; }
+
+.changes { list-style: none; margin: 0; padding: 0; }
+.change { display: flex; align-items: center; gap: 6px; padding: 2px 12px; white-space: nowrap; }
+.change:hover { background: var(--ld-accent); }
+.change .name { flex: none; }
+.change .dir { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.letter { width: 14px; text-align: center; font-weight: 700; font-size: 12px; }
+.letter-added { color: var(--ld-green); }
+.letter-modified { color: var(--ld-yellow); }
+.letter-deleted { color: var(--ld-danger); }
+.changes-busy .change:not(.change-syncing) { opacity: .5; }
+.change-syncing .syncing { font-weight: 700; color: var(--ld-primary); animation: syncing 1s ease-in-out infinite; }
+@keyframes syncing { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .change-syncing .syncing { animation: none; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>"use strict";(()=>{function R(t){let e=t.split("/");if(e[0]==="wp-admin"||e[0]==="wp-includes"||e.length===1&&/^(wp-[\w-]+|xmlrpc|index)\.php$/.test(e[0])&&e[0]!=="wp-config.php")return"WordPress core";if(e[0]==="wp-content"&&e.length>3){if(e[1]==="plugins"||e[1]==="mu-plugins")return`${e[1]==="plugins"?"plugin":"must-use plugin"} ${e[2]}`;if(e[1]==="themes")return`theme ${e[2]}`}return null}function N(t,e){let n=new Map;for(let o of e){let i=R(o);i&&n.set(i,(n.get(i)??0)+1)}let s=new Map;for(let o of t){let i=R(o);i&&s.set(i,(s.get(i)??0)+1)}return[...s].map(([o,i])=>({group:o,selected:i,total:n.get(o)??i})).filter(o=>o.selected<o.total)}var z="Other files",O="*";function X(t){return R(t)??z}function B(t){return t==="WordPress core"?0:t.startsWith("plugin ")?1:t.startsWith("must-use plugin ")?2:t.startsWith("theme ")?3:4}function x(t){let e=new Map;for(let n of t){let s=X(n.path),o=e.get(s);o||e.set(s,o=[]),o.push(n)}return[...e].sort(([n],[s])=>B(n)-B(s)||n.localeCompare(s))}function _(t,e){if(t.view!=="tracking")return null;let{ddev:n,site:s}=t,o=e==="live"?s.productionUrl:e==="mailpit"?n.mailpitUrl:n.url&&(e==="admin"?`${n.url.replace(/\/$/,"")}/wp-admin/`:n.url);return o&&/^https?:\/\/[^\s]+$/i.test(o)?o:null}var W="state",V="dispatch",q="open",K="state",F="state.stale";var E=class extends Error{constructor(e){super(`LocalDock's panel can't reach its worker (${e}). Update Orca, or restart the plugin.`),this.name="BridgeUnavailableError"}},Z=new Set(["unknown_method","not_permitted","unavailable","consent_required"]),A=class{orca;constructor(e=window){this.orca=e.orca}async request(e,n){let s=this.orca?.plugin;if(!s)throw new E("no orca.plugin");try{return await s.request(e,n,{timeoutMs:6e4})}catch(o){let i=o.code;throw i&&Z.has(i)?new E(i):o}}getState(){return this.request(W)}dispatch(e){return this.request(V,e)}openLink(e){return this.request(q,{target:e})}onState(e){let n=this.orca?.plugin;n&&(n.on(K,s=>e(s)),n.on(F,()=>{this.getState().then(e,()=>{})}))}async openUrl(e){if(!this.orca?.shell)throw new Error("Opening links needs the Orca desktop app.");await this.orca.shell.openExternal(e)}};function J(){return{selected:new Set,filter:"",includeUploads:!1,dbOpen:!1,dbGroups:new Set,confirming:null,toggledGroups:new Set,showAll:new Set}}var ee={"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"};function l(t){return String(t??"").replace(/[&<>"']/g,e=>ee[e])}function g(t,e,n={}){let s=typeof e=="string"?e:JSON.stringify(e);return`<button class="${["btn",n.primary?"btn-primary":"",n.danger?"btn-danger":""].filter(Boolean).join(" ")}" data-action="${l(s)}"${n.disabled?" disabled":""}${n.title?` title="${l(n.title)}"`:""}>${l(t)}</button>`}function D(t,e=Date.now()){if(!t)return"never";let n=Math.max(0,Math.round((e-Date.parse(t))/1e3));return n<60?"just now":n<3600?`${Math.floor(n/60)} min ago`:n<86400?`${Math.floor(n/3600)} h ago`:new Date(t).toLocaleDateString()}function Q(t,e){return[ne(t),se(t),te(e),`<main>${oe(t,e)}</main>`].join("")}function te(t){return t.confirming?`<div class="notice notice-error confirm" role="alertdialog"><span>${l(t.confirming.text)}</span>
+    <button class="btn btn-danger" data-confirm="yes">Confirm</button><button class="btn" data-confirm="no">Cancel</button></div>`:""}function ne(t){return t.notice?`<div class="notice notice-${l(t.notice.kind)}" role="status"><span>${l(t.notice.text)}</span>${g("\xD7",{type:"dismiss-notice"},{title:"Dismiss"})}</div>`:""}function se(t){let e=t.job;if(!e)return"";let n=e.total?Math.round((e.current??0)/e.total*100):null;return`<div class="job" role="progressbar"${n!==null?` aria-valuenow="${n}"`:""}>
+    <div class="job-text"><strong>${l(e.title)}</strong><span>${l(e.message)}</span></div>
+    <div class="bar"><div class="bar-fill${n===null?" indeterminate":""}" style="width:${n??30}%"></div></div>
+    ${e.cancellable?g("Cancel",{type:"cancel"}):""}
+  </div>`}function oe(t,e){switch(t.view){case"loading":return'<p class="muted">Loading\u2026</p>';case"awaiting-orca":return ae(t.gaps,t.blockedAction);case"no-project":return T("No project open","Create or open a project in Orca, then come back here. LocalDock pulls a WordPress site into an empty project.");case"remote-project":return T("This project isn\u2019t on this computer",`\u201C${t.projectName}\u201D lives on another machine. DDEV runs sites on this computer, so LocalDock needs a local project. Create an empty one in Orca and open it.`);case"project-not-empty":return T("This project already has files",`LocalDock pulls a WordPress site into a new, empty project, so \u201C${t.projectName}\u201D can\u2019t take one. Create an empty project in Orca, open it, then check again.`,g("Check again",{type:"refresh"},{primary:!0}));case"set-up":return T("Use LocalDock here?",`\u201C${t.projectName}\u201D is empty, so LocalDock can pull a WordPress site from a cPanel server into it. LocalDock stays out of projects you don\u2019t set up.`,g("Use LocalDock in this project",{type:"set-up"},{primary:!0}));case"no-hosts":return T("Connect a cPanel server","Add a Host to your SSH config (~/.ssh/config) that points at a cPanel server, and connect to it once with ssh in a terminal so its key is in known_hosts. Log in as root to see every account, or as a cPanel account user to see that account\u2019s sites.",g("Check again",{type:"refresh"},{primary:!0}));case"choose-host":return re(t.hosts);case"scanning":return`<h2>${l(t.host.label)}</h2><p class="muted">Scanning for WordPress sites\u2026</p>`;case"site-list":return ie(t.host,t.sites,t.projectEmpty,e);case"pulling":return`<h2>Pulling ${l(t.site.domain)}</h2><p class="muted">From ${l(t.host.label)} into this project. Files first, then the database, then DDEV starts the site.</p>`;case"pull-interrupted":{let n=t.hostLabel?` from ${t.hostLabel}`:"",s=`${t.filesDone} file${t.filesDone===1?"":"s"}`;return T(`The pull of ${t.domain} didn\u2019t finish`,t.canResume?`It stopped part-way (started ${D(t.startedAt)}), with ${s} already here. Resume picks up where it left off${n}: files that are still current are kept, and the database is downloaded afresh.`:`It stopped part-way, with ${s} downloaded. LocalDock on this computer has no record of which server it came from, so it can\u2019t resume it. Start over clears the project so you can pull the site again.`,(t.canResume?g("Resume pull",{type:"resume-pull"},{primary:!0,disabled:!!t.job}):"")+g("Start over",{type:"discard-pull"},{danger:!0,disabled:!!t.job}))}case"tracking":return ge(t,e);case"error":return T("Something went wrong",t.message,g("Try again",{type:"refresh"},{primary:!0}))}}function T(t,e,n=""){return`<section class="empty"><h2>${l(t)}</h2><p>${l(e)}</p>${n}</section>`}function ae(t,e){return`<section class="empty">
+    <h2>Waiting on Orca</h2>
+    <p>LocalDock is a work in progress. ${e?`This step (<code>${l(e)}</code>) needs`:"It needs"} a capability Orca plugins don't have yet:</p>
+    <ul class="gaps">${t.map(n=>`<li><strong>${l(n.title)}</strong><br><span class="muted">${l(n.need)}</span></li>`).join("")}</ul>
+    <p class="muted">Details: github.com/incompletebiped/orca-localdock \u203A docs/ORCA-GAPS.md</p>
+    ${g("Check again",{type:"refresh"})}
+  </section>`}function re(t){return`<h2>Choose a server</h2>
+  <p class="muted">SSH hosts from your SSH config. LocalDock lists the WordPress sites on the cPanel server behind each one.</p>
+  <ul class="list">${t.map(e=>`<li class="row">
+        <span class="dot ${e.connected?"dot-on":"dot-off"}" title="${e.connected?"Connected":"Not connected"}"></span>
+        <span class="grow"><strong>${l(e.label)}</strong><br><span class="muted small">${l(e.detail)}</span></span>
+        ${e.connected?g("Scan for sites",{type:"scan-sites",hostId:e.id},{primary:!0}):g("Connect",{type:"connect-host",hostId:e.id},{primary:!0})}
+      </li>`).join("")}</ul>`}function ie(t,e,n,s){let o=s.filter.trim().toLowerCase(),i=o?e.filter(d=>d.domain.includes(o)||d.account.includes(o)||d.aliases.some(c=>c.includes(o))):e,p=new Map;for(let d of i)p.set(d.account,[...p.get(d.account)??[],d]);return`<div class="toolbar">${g("\u2039 Servers",{type:"back-to-hosts"})}<span class="grow"></span>${g("Rescan",{type:"scan-sites",hostId:t.id})}</div>
+  <h2>${l(t.label)}</h2>
+  <p class="muted small">${e.length} WordPress site${e.length===1?"":"s"} found.</p>
+  ${n?"":`<p class="notice notice-info">This project isn't empty. Create a new, empty project to pull a site into.</p>`}
+  <input class="input" type="search" placeholder="Filter sites" value="${l(s.filter)}" data-ui="filter">
+  <label class="check"><input type="checkbox" data-ui="includeUploads"${s.includeUploads?" checked":""}> Also download media uploads</label>
+  ${[...p].map(([d,c])=>`<h3>${l(d)}</h3><ul class="list">${c.map(h=>`<li class="row">
+            <span class="grow"><strong>${l(h.domain)}</strong><br><span class="muted small">WordPress ${l(h.wpVersion)}${h.aliases.length?` \xB7 also ${l(h.aliases.join(", "))}`:""}</span></span>
+            ${g("Pull",{type:"pull-site",hostId:t.id,account:h.account,domain:h.domain,includeUploads:s.includeUploads},{primary:!0,disabled:!n})}
+          </li>`).join("")}</ul>`).join("")||'<p class="muted">No sites match.</p>'}`}var le={added:"A",modified:"M",deleted:"D",unchanged:""},ce={push:"\u2191",pull:"\u2193",conflict:"\u21C5",same:""};function pe(t,e,n,s){return`<ul class="changes${s?" changes-busy":""}">${t.map(o=>{let i=o[e],p=o.path.split("/").pop()??o.path,d=o.path.slice(0,o.path.length-p.length).replace(/\/$/,""),c=o.syncing?`<span class="syncing" aria-label="Syncing">${ce[o.direction]}</span>`:"";return`<li class="change${o.syncing?" change-syncing":""}" title="${l(o.path)}">
+        <input type="checkbox" data-select="${l(o.path)}"${n.selected.has(o.path)?" checked":""}${s?" disabled":""} aria-label="Select ${l(o.path)}">
+        <span class="name">${l(p)}</span><span class="dir muted">${l(d)}</span>
+        ${c}<span class="letter letter-${l(i)}">${le[i]}</span>
+      </li>`}).join("")}</ul>`}var de=30,ue=200;function C(t,e,n={}){let s=["btn",n.primary?"btn-primary":"",n.danger?"btn-danger":"",n.cls??""].filter(Boolean).join(" "),o=Object.entries(e).map(([i,p])=>` ${i}="${l(p)}"`).join("");return`<button class="${s}"${o}${n.disabled?" disabled":""}${n.title?` title="${l(n.title)}"`:""}>${l(t)}</button>`}function I(t,e,n,s,o,i){let p=e.length<=de;return x(e).map(([d,c])=>{let h=`${t}|${d}`,w=p!==s.toggledGroups.has(h),S=c.filter(P=>s.selected.has(P.path)).length,y=t==="push"?"Push":"Pull",k=t==="conflict"?"":C(y,{"data-group-action":h},{disabled:o||i,title:`${y} all ${c.length} changed file${c.length===1?"":"s"} in ${d}`,cls:"btn-small"}),$=w?s.showAll.has(h)?c:c.slice(0,ue):[];return`<div class="group">
+        <div class="group-head">
+          <input type="checkbox" data-group-select="${l(h)}"${S===c.length?" checked":""}${o?" disabled":""} aria-label="Select all of ${l(d)}">
+          <button class="group-toggle" data-group-toggle="${l(h)}" aria-expanded="${w}">${w?"\u25BE":"\u25B8"} <span class="group-name">${l(d)}</span></button>
+          <span class="badge">${S?`${S}/`:""}${c.length}</span>
+          ${k}
+        </div>
+        ${w?pe($,n,s,o):""}
+        ${w&&$.length<c.length?`<p class="pad">${C(`Show all ${c.length}`,{"data-group-showall":h},{cls:"btn-small"})}</p>`:""}
+      </div>`}).join("")}function G(t,e,n,s){return`<details class="section" open><summary><span class="grow">${l(t)}</span><span class="badge">${e}</span></summary>
+    ${e?`<div class="section-actions">${s}</div>${n}`:'<p class="muted small pad">Nothing here.</p>'}</details>`}function ge(t,e){let{site:n,ddev:s,changes:o}=t,i=s.status==="running",p=!!t.job,d=t.serverBlocked,c=u=>({disabled:u||!!d,...d?{title:d}:{}}),h=s.status==="not-installed"?'<p class="notice notice-info">Install <strong>DDEV</strong> to run this site locally (ddev.com).</p>':s.status==="docker-not-running"?`<div class="notice notice-info"><span>Docker isn\u2019t running, so the local site can\u2019t start.</span>${g("Start Docker Desktop",{type:"start-docker"},{primary:!0,disabled:p})}${g("Check again",{type:"refresh"},{disabled:p})}</div>`:`<div class="ddev">
+          <span class="dot ${i?"dot-on":"dot-off"}"></span>
+          <span class="grow">${i?`Running at <button class="link" data-action="${l(JSON.stringify({type:"open",target:"site"}))}" title="Open in Orca\u2019s browser">${l(s.url??"")}</button>`:`Local site ${l(s.status.replace("-"," "))}`}</span>
+          ${i?g("\u25A0 Stop",{type:"stop"},{disabled:p}):g("\u25B6 Start",{type:"start"},{primary:!0,disabled:p})}
+        </div>
+        <div class="links">
+          ${g("Site",{type:"open",target:"site"},{disabled:!i})}
+          ${g("WP Admin",{type:"open",target:"admin"},{disabled:!i})}
+          ${g("Mailpit",{type:"open",target:"mailpit"},{disabled:!i})}
+          ${g("Live site",{type:"open",target:"live"})}
+        </div>
+        ${t.dockerIdle&&!i?`<div class="notice notice-info"><span>No local sites are running. Quit Docker Desktop to free its memory? Start opens it again.</span>${g("Quit Docker Desktop",{type:"quit-docker"},{disabled:p})}${g("Keep it",{type:"keep-docker"},{disabled:p})}</div>`:""}`,w=o?.rows??[],S=w.filter(u=>u.direction==="push"),y=w.filter(u=>u.direction==="pull"),k=w.filter(u=>u.direction==="conflict"),$=u=>!u.some(m=>e.selected.has(m.path)),P=(u,m,f,L={})=>C(u,{"data-select-action":m},{...L,...c(f)}),r=(u,m)=>C(u,{"data-group-action":`${m}|${O}`},c(p)),a=!!d,b=o?[G("Local changes",S.length,I("push",S,"local",e,p,a),P("Push selected","push",p||$(S),{primary:!0})+r("Push all","push")),G("Server changes",y.length,I("pull",y,"remote",e,p,a),P("Pull selected","pull",p||$(y))+r("Pull all","pull")),G("Changed on both sides",k.length,I("conflict",k,"local",e,p,a),P("Keep local (push)","keep-local",p||$(k),{danger:!0})+P("Take server (pull)","take-server",p||$(k),{danger:!0}))].join(""):'<p class="muted small pad">Looking for local changes\u2026</p>';return`<header class="site">
+      <h2>${l(n.domain)}</h2>
+      <p class="muted small">${l(n.hostLabel)} \xB7 ${l(n.account)} \xB7 pulled ${l(D(n.pulledAt))}${n.lastPushedAt?` \xB7 pushed ${l(D(n.lastPushedAt))}`:""}</p>
+    </header>
+    ${h}
+    <div class="toolbar">${g("\u27F3 Check for changes",{type:"scan-changes"},{primary:!0,...c(p)})}<span class="grow"></span><span class="muted small">${o?o.serverCheckedAt?`server checked ${l(D(o.serverCheckedAt))}`:"server not checked yet":""}</span></div>
+    ${d?`<p class="muted small server-off">Server steps are off: ${l(d)} Starting, stopping, links and the local change list still work.</p>`:""}
+    ${b}
+    ${he(t.dbGroups,t.lastBackup,e,p,d)}
+    <p class="muted small pad maintenance">${g("Free up space",{type:"free-space"},{disabled:p,title:"Remove DDEV images left by older DDEV versions"})}</p>`}function he(t,e,n,s,o){let i=(c,h)=>({disabled:c||!!o,...o||h?{title:o??h}:{}}),p=t?t.filter(c=>n.dbGroups.has(c.id)).map(c=>c.id):[],d=n.dbOpen?t?`<div class="pad">
+          ${t.map(c=>`<label class="check"><input type="checkbox" data-dbgroup="${l(c.id)}"${n.dbGroups.has(c.id)?" checked":""}>
+                <span><strong>${l(c.label)}</strong> <span class="muted small">(${c.tables} table${c.tables===1?"":"s"})</span><br><span class="muted small">${l(c.description)}</span></span></label>`).join("")}
+          <p class="muted small">The live database is backed up on the server before anything is overwritten.</p>
+          ${g("Push selected tables",{type:"push-db",groups:p},{danger:!0,...i(s||p.length===0)})}
+        </div>`:'<p class="muted small pad">Loading table groups\u2026</p>':"";return`<details class="section"${n.dbOpen?" open":""} data-ui="dbOpen"><summary><span class="grow">Database</span></summary>
+    <div class="section-actions">
+      ${g("Pull live database",{type:"pull-db"},i(s,"Replace the local database with a copy of the live one"))}
+      ${n.dbOpen?"":g("Push database\u2026","open-db",i(!1))}
+      ${e?g("Roll back last push",{type:"rollback-db",backupPath:e},{danger:!0,...i(s)}):""}
+    </div>
+    ${d}
+  </details>`}var me=3e3,fe=15e3;function Y(t,e){let n=J(),s={view:"loading",revision:0,job:null,notice:null},o,i=()=>{let r=document.activeElement?.dataset.ui;if(t.innerHTML=Q(s,n),r){let a=t.querySelector(`[data-ui="${r}"]`);a?.focus(),a&&"value"in a&&a.setSelectionRange?.(a.value.length,a.value.length)}},p=r=>{let a=String(r?.message??r);r instanceof E?s={view:"error",message:a,revision:s.revision,job:null,notice:null}:s={...s,notice:{kind:"error",text:a}},i(),c()},d=r=>{if(r.revision<s.revision&&s.view!=="error")return c();(r.revision!==s.revision||r.view!==s.view)&&(r.view!==s.view&&n.selected.clear(),s=r,i()),c()},c=()=>{clearTimeout(o),o=setTimeout(()=>{e.getState().then(d,p)},s.job?me:fe)},h=r=>{r.type==="load-db-groups"&&(n.dbOpen=!0),e.dispatch(r).then(d,p)},w=r=>{let a=_(s,r.target),b=u=>{s={...s,notice:{kind:"error",text:u}},i()};if(!a)return b("Start the local site first.");e.openLink(r.target).then(u=>u.opened?void 0:e.openUrl(u.url??a)).catch(()=>e.openUrl(a)).catch(u=>b(u.message))},S=r=>{if(r.type==="push-db")return"Overwrite the selected tables on the LIVE site? A backup is taken first.";if(r.type==="rollback-db")return"Restore the live database to the backup taken before the last push?";if(r.type==="discard-pull")return"Delete everything this pull downloaded into the project? The live site isn\u2019t touched.";let a=[];if((r.type==="push-files"||r.type==="pull-files")&&r.allowConflicts&&a.push("These files changed on both sides. Overwrite the other side\u2019s version?"),r.type==="pull-files"&&s.view==="tracking"){let b=(s.changes?.rows??[]).filter(m=>m.direction==="pull"||m.direction==="conflict").map(m=>m.path),u=N(r.paths??[],b);if(u.length>0){let m=u.slice(0,3).map(f=>`${f.selected} of ${f.total} changed files in ${f.group}`).join(", ");a.push(`This pulls only part of an update (${m}${u.length>3?", \u2026":""}), which can leave the local site running mismatched code. Pull just these anyway?`)}}return a.length>0?a.join(" "):null},y=r=>{let a=S(r);if(a){n.confirming={action:JSON.stringify(r),text:a},i();return}h(r)},k=r=>s.view==="tracking"?(s.changes?.rows??[]).filter(a=>a.direction===r):[],$=r=>{let a=[],b=[];for(let[u,m]of x(k(r))){let f=m.filter(L=>n.selected.has(L.path));f.length===m.length?b.push(u):a.push(...f.map(L=>L.path))}return{paths:a,groups:b}},P=r=>{let a=r.indexOf("|");return[r.slice(0,a),r.slice(a+1)]};t.addEventListener("click",r=>{let a=r.target,b=a.closest("[data-group-toggle]");if(b){let v=b.dataset.groupToggle;n.toggledGroups.delete(v)||n.toggledGroups.add(v),i();return}let u=a.closest("[data-group-showall]");if(u){n.showAll.add(u.dataset.groupShowall),i();return}let m=a.closest("[data-group-action]");if(m&&!m.disabled){let[v,M]=P(m.dataset.groupAction);return v==="conflict"?void 0:y({type:v==="push"?"push-files":"pull-files",groups:[M===O?O:M]})}let f=a.closest("[data-select-action]");if(f&&!f.disabled){let v=f.dataset.selectAction;return v==="push"?y({type:"push-files",...$("push")}):v==="pull"?y({type:"pull-files",...$("pull")}):v==="keep-local"?y({type:"push-files",...$("conflict"),allowConflicts:!0}):v==="take-server"?y({type:"pull-files",...$("conflict"),allowConflicts:!0}):void 0}let L=r.target.closest("[data-confirm]");if(L&&n.confirming){let v=n.confirming.action;n.confirming=null,i(),L.dataset.confirm==="yes"&&h(JSON.parse(v));return}let U=r.target.closest("[data-action]");if(!U||U.disabled)return;let H=U.dataset.action;if(H==="open-db"){n.dbOpen=!0,i(),h({type:"load-db-groups"});return}let j;try{j=JSON.parse(H)}catch{return}if(j.type==="open")return w(j);y(j)}),t.addEventListener("change",r=>{let a=r.target;if(a.dataset.groupSelect!==void 0){let[b,u]=P(a.dataset.groupSelect),m=x(k(b)).find(([f])=>f===u)?.[1]??[];for(let f of m)a.checked?n.selected.add(f.path):n.selected.delete(f.path);i()}else a.dataset.select!==void 0?(a.checked?n.selected.add(a.dataset.select):n.selected.delete(a.dataset.select),i()):a.dataset.dbgroup!==void 0?(a.checked?n.dbGroups.add(a.dataset.dbgroup):n.dbGroups.delete(a.dataset.dbgroup),i()):a.dataset.ui==="includeUploads"&&(n.includeUploads=a.checked,i())}),t.addEventListener("input",r=>{let a=r.target;a.dataset.ui==="filter"&&(n.filter=a.value,i())}),i(),e.onState(d),e.getState().then(r=>{if(r.view==="tracking"&&r.dbGroups)for(let a of r.dbGroups)a.pushByDefault&&n.dbGroups.add(a.id);d(r)},p)}Y(document.getElementById("app"),new A);})();
+</script>
+</body>
+</html>

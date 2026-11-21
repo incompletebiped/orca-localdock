@@ -42,7 +42,7 @@ This package has no Orca or VS Code dependencies.
 
 ### `packages/orca-plugin`: the plugin
 
-- `orca-plugin.json`: the manifest (format 2, `trusted-worker`). It declares one panel, the palette commands, the `workspace.changed` event, a status bar item and the capabilities.
+- `orca-plugin.json` (at the repository root, which is the plugin folder): the manifest (format 2, `trusted-worker`). It declares one panel, the palette commands, the `workspace.changed` event, a status bar item, the capabilities, and the icon, cover and screenshots in `docs/media/`. It names the built worker and panel in `plugin/`, which are committed because installs from Git run no build; CI fails when they don't match the source.
 - `src/worker/main.ts`: `activate(orca)`. It answers the panel's two requests (`state` and `dispatch`) with `orca.panels.handle`, registers the command-palette shortcuts, refreshes on `workspace.changed`, and keeps the status bar item current. A dispatch answers within 400 ms with the state so far, because a pull can outlast a panel request; the rest arrives as pushes.
 - `src/worker/transport.ts`: pushes each state to the panel with `orca.panels.post`, at most every 100 ms (Orca allows 200 posts per 10 s). A state over 256 KiB goes out as a `state.stale` notice, and the panel fetches it.
 - `src/worker/status.ts`: the status bar text for a state.
@@ -52,7 +52,7 @@ This package has no Orca or VS Code dependencies.
 - `src/worker/orca/`: `OrcaHost` is the interface to everything Orca provides. `PluginOrcaHost` implements it with Orca's host API 1, and SSH with the user's SSH config (Orca doesn't share its SSH hosts with plugins).
 - `src/panel/`: the UI. `render.ts` is a pure function from state to HTML, and every string from the server is escaped. Confirmations happen inline, because the sandbox blocks `confirm()`. `bridge.ts` is the panel's side of the messaging (`window.orca.plugin`). Link buttons and the local URL ask the worker (`open` request) to open a tab in Orca's browser through Orca's CLI; if that fails, the panel opens the default browser with `orca.shell.openExternal`, which Orca only allows from a click in the frame. Colors come from Orca's `--orca-*` frame variables.
 - `src/preview/`: a browser preview with sample states. It's not shipped.
-- `scripts/build.mjs`: bundles the worker into `dist/worker.mjs`, and inlines the panel's script and CSS into `dist/panel/index.html`, so it also works in browser clients of `orca serve`, whose frames allow inline only.
+- `scripts/build.mjs`: bundles the worker into `plugin/worker.mjs` (not minified, so the shipped code can be read), and inlines the panel's script and CSS into `plugin/panel/index.html`, so it also works in browser clients of `orca serve`, whose frames allow inline only.
 
 ## Swap points
 
