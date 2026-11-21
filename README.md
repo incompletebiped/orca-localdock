@@ -49,13 +49,13 @@ Screenshots use made-up sample data (example.com). See [docs/media](docs/media/R
 
 ### 1. Install the plugin
 
-From the plugin's page in [Orca's plugin directory](https://orca.dev/plugins/incompletebiped/orca-localdock), or from a terminal:
+In Orca, open **Settings → Plugins**, choose **Add plugin → From a Git URL…**, paste `https://github.com/incompletebiped/orca-localdock` and choose **Install**. Or from a terminal:
 
 ```sh
 orca plugin install incompletebiped/orca-localdock
 ```
 
-Orca shows what LocalDock asks for (see [Access it asks for](#access-it-asks-for)) and prints the same command with `--approve <fingerprint>`. Run that to install it. Later versions come with `orca plugin update incompletebiped.localdock`, and `orca plugin uninstall incompletebiped.localdock` removes it.
+Either way Orca installs the newest release and first shows what LocalDock asks for (see [Access it asks for](#access-it-asks-for)). In the terminal it prints the same command with `--approve <fingerprint>`; run that to install it. The plugin's page is [orca.dev/plugins/incompletebiped/orca-localdock](https://orca.dev/plugins/incompletebiped/orca-localdock). Later versions come with `orca plugin update incompletebiped.localdock`, and `orca plugin uninstall incompletebiped.localdock` removes it.
 
 ### 2. Add your server to your SSH config
 
