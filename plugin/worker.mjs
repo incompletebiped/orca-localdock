@@ -4078,15 +4078,6 @@ var require_bcrypt_pbkdf = __commonJS({
   }
 });
 
-// node_modules/cpu-features/lib/index.js
-var require_lib2 = __commonJS({
-  "node_modules/cpu-features/lib/index.js"(exports, module) {
-    "use strict";
-    var binding = __require("../build/Release/cpufeatures.node");
-    module.exports = binding.getCPUInfo;
-  }
-});
-
 // node_modules/ssh2/lib/protocol/constants.js
 var require_constants = __commonJS({
   "node_modules/ssh2/lib/protocol/constants.js"(exports, module) {
@@ -4094,7 +4085,7 @@ var require_constants = __commonJS({
     var crypto = __require("crypto");
     var cpuInfo;
     try {
-      cpuInfo = require_lib2()();
+      cpuInfo = __require("cpu-features")();
     } catch {
     }
     var { bindingAvailable, CIPHER_INFO, MAC_INFO } = require_crypto();
@@ -20121,7 +20112,7 @@ var require_keygen = __commonJS({
 });
 
 // node_modules/ssh2/lib/index.js
-var require_lib3 = __commonJS({
+var require_lib2 = __commonJS({
   "node_modules/ssh2/lib/index.js"(exports, module) {
     "use strict";
     var {
@@ -20506,7 +20497,7 @@ async function readFileIfExists(file2) {
 // packages/core/dist/ssh/SshConnection.js
 import { createHash, randomBytes as randomBytes2 } from "node:crypto";
 import * as fs2 from "node:fs/promises";
-var import_ssh2 = __toESM(require_lib3(), 1);
+var import_ssh2 = __toESM(require_lib2(), 1);
 import * as path2 from "node:path";
 import { Readable } from "node:stream";
 var MAX_BUFFERED_OUTPUT = 64 * 1024 * 1024;
