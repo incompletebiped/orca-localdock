@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known public test data"
+# ssh2 embeds this throwaway Ed25519 key to check whether Node can sign with Ed25519 (ssh2/lib/protocol/constants.js).
+# It's public in every copy of ssh2, and plugin/worker.mjs bundles ssh2.
+regexes = ['''MC4CAQAwBQYDK2VwBCIEIHKj\+sVa9WcD/q2DJUJaf43Kptc8xYuUQA4bOFj9vC8T''']

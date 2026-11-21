@@ -41,6 +41,8 @@ jobs:
         run: |
           if [ -n "$(git status --porcelain -- plugin)" ]; then
             git status --short -- plugin
+            git --no-pager diff --stat -- plugin
+            git --no-pager diff -U1 -- plugin | head -80
             echo "::error::plugin/ is out of date: run npm run build and commit it."
             exit 1
           fi
